@@ -132,17 +132,51 @@ Remove the env vars from settings:
 # Or delete the entire "env" block if you didn't have one before.
 ```
 
+## FAQ
+
+### Do I need extra config for extended thinking?
+
+**No.** Claude Code manages thinking internally — it decides when to use extended thinking based on the model and task. The `thinking` parameters are sent in the request body, and the gateway passes them through. Confirmed working with Opus 4.6 and Sonnet 4.6.
+
+### What about Haiku for summaries? Do I need per-model URL config?
+
+**No.** `ANTHROPIC_BASE_URL` applies to ALL model calls. Claude Code uses multiple models internally:
+- **Primary**: your selected model (Opus, Sonnet, etc.)
+- **Summary/compaction**: `claude-haiku-4-5-20251001`
+- **Both go through the same URL** — Claude Code sends the model name in each request body
+
+All model name formats are accepted by the Copilot API (tested):
+| Claude Code sends | Copilot API accepts? | Responds as |
+|---|---|---|
+| `claude-sonnet-4-6-20250514` | Yes | `claude-sonnet-4-6` |
+| `claude-haiku-4-5-20251001` | Yes | `claude-haiku-4-5-20251001` |
+| `claude-opus-4-6-20250514` | Yes | `claude-opus-4-6` |
+| `claude-opus-4.6-1m` | Yes | `claude-opus-4-6` |
+
+### Can I override which model Claude Code uses?
+
+Yes, via env vars (no settings file changes needed):
+```bash
+# Use Opus 4.6 as primary, haiku for summaries (default)
+ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 \
+  ANTHROPIC_MODEL=claude-opus-4.6 claude
+
+# Use Opus 4.6 1M context as primary
+ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 \
+  ANTHROPIC_MODEL=claude-opus-4.6-1m claude
+```
+
 ## Limitations
 
 ### What works
 - Chat, multi-turn conversation
 - Streaming responses
 - Tool use (read/write files, bash, grep, etc.)
-- Extended thinking (if the model supports it)
-- All Claude models available through the gateway
+- Extended thinking (Opus 4.6, Sonnet 4.6 — budget 1K-32K tokens)
+- All Claude models (Haiku, Sonnet, Opus, Opus-1M) through the same URL
+- Date-suffixed model names (`claude-sonnet-4-6-20250514`) accepted
 
 ### What might not work
-- **Model selection**: Claude Code has its own model selection logic. It will send whatever model name it's configured to use (e.g., `claude-sonnet-4-6-20250514`). The Copilot API may not recognize date-suffixed model names — it expects `claude-sonnet-4.6`. If you hit "model not found" errors, you may need to check what model name Claude Code is sending.
 - **Token counting**: Claude Code's token budget calculations assume direct Anthropic API responses. The Copilot API returns slightly different `usage` fields (e.g., includes `copilot_usage`), which shouldn't cause issues but is worth noting.
 - **Rate limits**: You're bound by your Copilot plan's quota, not Anthropic's rate limits. Enterprise plans typically have unlimited requests.
 - **Anthropic-specific headers**: Some Anthropic beta features that require special headers (like `anthropic-beta`) may not be forwarded correctly through the Copilot proxy.
