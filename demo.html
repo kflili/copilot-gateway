@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copilot Gateway Demo</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
+    --border: #30363d; --text: #e6edf3; --text2: #8b949e;
+    --accent: #58a6ff; --green: #3fb950; --orange: #d29922;
+    --red: #f85149; --purple: #bc8cff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'SF Mono', Menlo, monospace; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; font-size: 13px; }
+
+  /* ── Header ── */
+  .header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .header h1 { font-size: 15px; font-weight: 600; color: var(--accent); }
+  .header select { background: var(--bg3); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-family: inherit; font-size: 12px; min-width: 200px; }
+  .header .model-info { color: var(--text2); font-size: 11px; }
+  .header .mode-toggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .header .mode-btn { background: var(--bg); color: var(--text2); border: none; padding: 5px 12px; font-family: inherit; font-size: 11px; cursor: pointer; font-weight: 600; transition: all 0.15s; }
+  .header .mode-btn:not(:last-child) { border-right: 1px solid var(--border); }
+  .header .mode-btn.active { background: var(--accent); color: #fff; }
+  .header .mode-btn:hover:not(.active) { background: var(--bg3); color: var(--text); }
+  .header .status { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text2); }
+  .header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .header .dot.off { background: var(--red); }
+
+  /* ── Mode Info Bar ── */
+  .mode-info-bar { display: flex; align-items: center; gap: 8px; padding: 6px 20px; background: var(--bg3); border-bottom: 1px solid var(--border); font-size: 11px; flex-shrink: 0; overflow-x: auto; white-space: nowrap; }
+  .mode-info-bar .mib-label { color: var(--text2); font-weight: 600; text-transform: uppercase; font-size: 9px; letter-spacing: 0.5px; }
+  .mode-info-bar .mib-url { color: var(--green); font-family: 'SF Mono', Menlo, monospace; padding: 2px 8px; background: rgba(63,185,80,0.1); border-radius: 3px; margin-right: 12px; }
+  .mode-info-bar .mib-value { color: var(--text); margin-right: 12px; }
+
+  /* ── Main layout ── */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Chat pane ── */
+  .chat-pane { flex: 1; display: flex; flex-direction: column; min-width: 200px; }
+
+  /* ── Drag handle ── */
+  .drag-handle { width: 5px; cursor: col-resize; background: var(--border); flex-shrink: 0; transition: background 0.15s; }
+  .drag-handle:hover, .drag-handle.active { background: var(--accent); }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 16px; }
+  .msg { margin-bottom: 16px; line-height: 1.5; }
+  .msg.user { }
+  .msg.user .label { color: var(--accent); font-weight: 600; }
+  .msg.assistant .label { color: var(--green); font-weight: 600; }
+  .msg .label { font-size: 11px; margin-bottom: 4px; }
+  .msg .content { white-space: pre-wrap; word-break: break-word; }
+  .msg .meta { font-size: 10px; color: var(--text2); margin-top: 4px; }
+
+  .chat-input { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg2); }
+  .chat-input textarea { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-family: inherit; font-size: 13px; resize: none; min-height: 44px; max-height: 120px; outline: none; }
+  .chat-input textarea:focus { border-color: var(--accent); }
+  .chat-input button { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 10px 20px; font-family: inherit; font-size: 13px; cursor: pointer; font-weight: 600; white-space: nowrap; }
+  .chat-input button:hover { opacity: 0.9; }
+  .chat-input button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Flow log pane ── */
+  .flow-pane { width: 50%; display: flex; flex-direction: column; background: var(--bg2); flex-shrink: 0; min-width: 200px; }
+  .flow-header { display: flex; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .flow-header h2 { font-size: 13px; font-weight: 600; color: var(--orange); }
+  .flow-header button { margin-left: auto; background: none; border: 1px solid var(--border); color: var(--text2); padding: 3px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; font-family: inherit; }
+  .flow-header button:hover { color: var(--text); border-color: var(--text2); }
+  .flow-log { flex: 1; overflow-y: auto; padding: 8px; }
+
+  .flow-entry { margin-bottom: 8px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .flow-entry .fe-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg3); cursor: pointer; font-size: 11px; }
+  .flow-entry .fe-header:hover { background: var(--border); }
+  .flow-entry .fe-time { color: var(--text2); font-variant-numeric: tabular-nums; }
+  .flow-entry .fe-tag { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+  .tag-req { background: #1f3a5f; color: var(--accent); }
+  .tag-res { background: #1a3a2a; color: var(--green); }
+  .tag-chunk { background: #2d2a1a; color: var(--orange); }
+  .tag-err { background: #3d1a1a; color: var(--red); }
+  .tag-info { background: #2a1f3a; color: var(--purple); }
+  .flow-entry .fe-text { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .flow-entry .fe-body { display: none; padding: 8px 10px; font-size: 11px; border-top: 1px solid var(--border); }
+  .flow-entry .fe-body.open { display: block; }
+  .flow-entry .fe-body pre { white-space: pre-wrap; word-break: break-all; color: var(--text2); max-height: 300px; overflow-y: auto; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>Copilot Gateway Demo</h1>
+  <div class="mode-toggle" id="mode-toggle">
+    <button class="mode-btn active" data-mode="vscode" onclick="setMode('vscode')">VS Code</button>
+    <button class="mode-btn" data-mode="cli" onclick="setMode('cli')">CLI</button>
+  </div>
+  <select id="model-select"><option>Loading models...</option></select>
+  <span class="model-info" id="model-info"></span>
+  <div class="status">
+    <div class="dot" id="status-dot"></div>
+    <span id="status-text">connecting...</span>
+  </div>
+</div>
+
+<!-- Mode Info Bar -->
+<div class="mode-info-bar" id="mode-info-bar">
+  <span class="mib-label">API</span>
+  <span class="mib-url" id="mib-url">-</span>
+  <span class="mib-label">Token</span>
+  <span class="mib-value" id="mib-token">-</span>
+  <span class="mib-label">Header</span>
+  <span class="mib-value" id="mib-header">-</span>
+  <span class="mib-label">Models</span>
+  <span class="mib-value" id="mib-count">-</span>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <!-- Chat -->
+  <div class="chat-pane">
+    <div class="chat-messages" id="chat-messages"></div>
+    <div class="chat-input">
+      <textarea id="chat-input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+      <button id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <!-- Drag Handle -->
+  <div class="drag-handle" id="drag-handle"></div>
+
+  <!-- Flow Log -->
+  <div class="flow-pane" id="flow-pane">
+    <div class="flow-header">
+      <h2>Call Flow</h2>
+      <button onclick="clearFlow()">Clear</button>
+    </div>
+    <div class="flow-log" id="flow-log"></div>
+  </div>
+</div>
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let messages = [];
+let models = [];
+let sending = false;
+let eventSource = null;
+let currentMode = 'vscode';
+
+const $ = (id) => document.getElementById(id);
+const chatEl = $('chat-messages');
+const flowEl = $('flow-log');
+const inputEl = $('chat-input');
+const sendBtn = $('send-btn');
+
+// ─── Mode toggle ─────────────────────────────────────────────────────────────
+function setMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  loadModels();
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+async function loadModels() {
+  try {
+    const resp = await fetch(`/api/models?mode=${currentMode}`);
+    const data = await resp.json();
+    models = data.models || data;
+    // Update mode info bar
+    const listedOnly = data.listed_only || [];
+    $('mib-url').textContent = data.api_base || '-';
+    $('mib-token').textContent = `${data.token_type || '?'} (${data.token_prefix || '?'})`;
+    $('mib-header').textContent = data.integration_id || '(none)';
+    $('mib-count').textContent = listedOnly.length
+      ? `${models.length} callable + ${listedOnly.length} listed-only`
+      : `${models.length} callable`;
+    const sel = $('model-select');
+    sel.innerHTML = '';
+    // Group by vendor
+    const vendors = {};
+    for (const m of models) {
+      const v = m.vendor || 'Other';
+      if (!vendors[v]) vendors[v] = [];
+      vendors[v].push(m);
+    }
+    for (const [vendor, ms] of Object.entries(vendors)) {
+      const group = document.createElement('optgroup');
+      group.label = vendor;
+      for (const m of ms) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = `${m.id}`;
+        group.appendChild(opt);
+      }
+      sel.appendChild(group);
+    }
+    // Default to claude-sonnet-4.6
+    if (models.some(m => m.id === 'claude-sonnet-4.6')) {
+      sel.value = 'claude-sonnet-4.6';
+    }
+    sel.onchange = updateModelInfo;
+    updateModelInfo();
+  } catch (e) {
+    $('model-select').innerHTML = '<option>Error loading models</option>';
+  }
+}
+
+function updateModelInfo() {
+  const id = $('model-select').value;
+  const m = models.find(x => x.id === id);
+  if (m) {
+    const ctx = m.context_window ? `${(m.context_window/1000).toFixed(0)}K ctx` : '';
+    const out = m.max_output ? `${(m.max_output/1000).toFixed(0)}K out` : '';
+    const feats = [
+      m.supports_streaming && 'stream',
+      m.supports_tools && 'tools',
+      m.supports_vision && 'vision',
+    ].filter(Boolean).join(', ');
+    const eps = (m.endpoints || []).join(', ');
+    $('model-info').textContent = `${models.length} models | ${ctx} / ${out} | ${feats} | ${eps}`;
+  }
+}
+
+// ─── SSE Event Stream ────────────────────────────────────────────────────────
+function connectEvents() {
+  eventSource = new EventSource('/api/events');
+  eventSource.onopen = () => {
+    $('status-dot').className = 'dot';
+    $('status-text').textContent = 'connected';
+  };
+  eventSource.onerror = () => {
+    $('status-dot').className = 'dot off';
+    $('status-text').textContent = 'disconnected';
+    setTimeout(connectEvents, 3000);
+  };
+
+  // Flow log events
+  for (const type of ['request_sent', 'response_headers', 'response_chunk', 'response_complete', 'response_error', 'chat_start']) {
+    eventSource.addEventListener(type, (e) => {
+      const data = JSON.parse(e.data);
+      addFlowEntry(type, data);
+    });
+  }
+}
+
+// ─── Chat ────────────────────────────────────────────────────────────────────
+function addChatMessage(role, content, meta) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = `
+    <div class="label">${role === 'user' ? 'You' : 'Assistant'}</div>
+    <div class="content" id="msg-${Date.now()}"></div>
+    ${meta ? `<div class="meta">${meta}</div>` : ''}
+  `;
+  div.querySelector('.content').textContent = content;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return div.querySelector('.content');
+}
+
+async function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text || sending) return;
+
+  sending = true;
+  sendBtn.disabled = true;
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+
+  messages.push({ role: 'user', content: text });
+  addChatMessage('user', text);
+
+  const model = $('model-select').value;
+  const assistantContent = addChatMessage('assistant', '');
+  let fullText = '';
+  const t0 = performance.now();
+
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages, mode: currentMode }),
+    });
+
+    let responseModel = model; // track what model actually responded
+
+    if (resp.headers.get('content-type')?.includes('text/event-stream')) {
+      // Streaming
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+            try {
+              const ev = JSON.parse(line.slice(6));
+              // Capture actual model from message_start (Anthropic)
+              if (ev.type === 'message_start' && ev.message?.model) {
+                responseModel = ev.message.model;
+              }
+              // Anthropic format
+              if (ev.type === 'content_block_delta') {
+                fullText += ev.delta?.text || '';
+                assistantContent.textContent = fullText;
+                chatEl.scrollTop = chatEl.scrollHeight;
+              }
+              // Capture actual model from OpenAI chunk
+              if (ev.model) responseModel = ev.model;
+              // OpenAI format
+              if (ev.choices?.[0]?.delta?.content) {
+                fullText += ev.choices[0].delta.content;
+                assistantContent.textContent = fullText;
+                chatEl.scrollTop = chatEl.scrollHeight;
+              }
+            } catch {}
+          }
+        }
+      }
+    } else {
+      // Non-streaming (Responses API)
+      const data = await resp.json();
+      if (data.model) responseModel = data.model;
+      if (data.error) {
+        fullText = `Error: ${data.error}`;
+      } else if (data.output_text) {
+        fullText = data.output_text;
+      } else if (data.output?.[0]?.content?.[0]?.text) {
+        fullText = data.output[0].content[0].text;
+      } else if (data.content?.[0]?.text) {
+        fullText = data.content[0].text;
+      } else {
+        fullText = JSON.stringify(data, null, 2);
+      }
+      assistantContent.textContent = fullText;
+    }
+
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    const actualModel = responseModel !== model ? `${model} → ${responseModel}` : responseModel;
+    const metaEl = assistantContent.parentElement.querySelector('.meta') ||
+      (() => { const m = document.createElement('div'); m.className = 'meta'; assistantContent.parentElement.appendChild(m); return m; })();
+    metaEl.textContent = `${actualModel} | ${elapsed}s`;
+
+    messages.push({ role: 'assistant', content: fullText });
+
+  } catch (e) {
+    assistantContent.textContent = `Error: ${e.message}`;
+  }
+
+  sending = false;
+  sendBtn.disabled = false;
+  inputEl.focus();
+}
+
+// ─── Flow Log ────────────────────────────────────────────────────────────────
+function addFlowEntry(type, data) {
+  const entry = document.createElement('div');
+  entry.className = 'flow-entry';
+
+  let tag, tagClass, summary, body;
+  const ts = data._ts || '';
+
+  switch (type) {
+    case 'chat_start':
+      tag = 'START'; tagClass = 'tag-info';
+      summary = `${data.model} (${data.format}) — ${data.message_count} messages`;
+      body = JSON.stringify(data, null, 2);
+      break;
+    case 'request_sent':
+      tag = 'REQ'; tagClass = 'tag-req';
+      summary = `${data.step}: ${data.method} ${data.url}`;
+      body = `Headers:\n${JSON.stringify(data.headers, null, 2)}\n\nBody:\n${JSON.stringify(data.body, null, 2)}`;
+      if (data.note) body += `\n\n${data.note}`;
+      break;
+    case 'response_headers':
+      tag = 'RES'; tagClass = 'tag-res';
+      summary = `${data.status} — ${data.elapsed_ms}ms${data.streaming ? ' (streaming)' : ''}`;
+      body = data.headers ? `Headers:\n${JSON.stringify(data.headers, null, 2)}` : null;
+      break;
+    case 'response_chunk':
+      tag = 'CHUNK'; tagClass = 'tag-chunk';
+      summary = `#${data.chunk_num}: "${(data.text || '').slice(0, 60)}"`;
+      body = null; // no expandable body for chunks
+      break;
+    case 'response_complete':
+      tag = 'DONE'; tagClass = 'tag-res';
+      summary = data.streaming
+        ? `${data.elapsed_ms}ms — ${data.chunks} chunks, ${data.bytes} bytes`
+        : `${data.elapsed_ms}ms — ${data.bytes} bytes`;
+      body = data.body ? JSON.stringify(data.body, null, 2) : null;
+      break;
+    case 'response_error':
+      tag = 'ERR'; tagClass = 'tag-err';
+      summary = `${data.status}: ${(data.body || '').slice(0, 80)}`;
+      body = data.body;
+      break;
+    default:
+      tag = type.toUpperCase(); tagClass = 'tag-info';
+      summary = JSON.stringify(data).slice(0, 80);
+      body = JSON.stringify(data, null, 2);
+  }
+
+  let html = `<div class="fe-header" ${body ? 'onclick="this.nextElementSibling.classList.toggle(\'open\')"' : ''}>
+    <span class="fe-time">${ts}</span>
+    <span class="fe-tag ${tagClass}">${tag}</span>
+    <span class="fe-text">${escHtml(summary)}</span>
+  </div>`;
+  if (body) {
+    html += `<div class="fe-body"><pre>${escHtml(body)}</pre></div>`;
+  }
+
+  entry.innerHTML = html;
+  flowEl.appendChild(entry);
+  flowEl.scrollTop = flowEl.scrollHeight;
+}
+
+function clearFlow() {
+  flowEl.innerHTML = '';
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ─── Input handling ──────────────────────────────────────────────────────────
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+});
+
+// ─── Draggable split ─────────────────────────────────────────────────────────
+{
+  const handle = $('drag-handle');
+  const flowPane = $('flow-pane');
+  let dragging = false;
+
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    dragging = true;
+    handle.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const container = document.querySelector('.main');
+    const rect = container.getBoundingClientRect();
+    const newFlowWidth = rect.right - e.clientX;
+    const clamped = Math.max(250, Math.min(newFlowWidth, rect.width - 250));
+    flowPane.style.width = clamped + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+}
+
+// ─── Init ────────────────────────────────────────────────────────────────────
+loadModels();
+connectEvents();
+inputEl.focus();
+</script>
+</body>
+</html>
