@@ -583,12 +583,24 @@ def main():
     # Pre-warm model cache
     models_cache.get()
 
+    # Launch menu bar indicator if binary exists
+    menubar_proc = None
+    menubar_bin = HERE / "menubar"
+    if menubar_bin.exists():
+        try:
+            menubar_proc = subprocess.Popen([str(menubar_bin)])
+            log(f"menu bar indicator started (PID {menubar_proc.pid})")
+        except Exception as e:
+            log(f"menu bar indicator failed: {e}")
+
     server = http.server.ThreadingHTTPServer((host, port), GatewayHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n[gateway] shutting down.")
         server.server_close()
+        if menubar_proc:
+            menubar_proc.terminate()
 
 
 if __name__ == "__main__":

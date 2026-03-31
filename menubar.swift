@@ -1,0 +1,131 @@
+// Copilot Gateway menu bar indicator
+// Compile: swiftc menubar.swift -o menubar -framework Cocoa
+// Usage: launched automatically by gateway.py
+
+import Cocoa
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var statusItem: NSStatusItem!
+    var gatewayPort: String = "8787"
+    var demoPort: String = "8788"
+    var checkTimer: Timer?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+
+        if let button = statusItem.button {
+            button.title = "⚡️CG"
+            button.toolTip = "Copilot Gateway"
+        }
+
+        let menu = NSMenu()
+
+        let titleItem = NSMenuItem(title: "Copilot Gateway", action: nil, keyEquivalent: "")
+        titleItem.isEnabled = false
+        menu.addItem(titleItem)
+        menu.addItem(NSMenuItem.separator())
+
+        let statusItem = NSMenuItem(title: "● Running", action: nil, keyEquivalent: "")
+        statusItem.attributedTitle = NSAttributedString(
+            string: "● Running",
+            attributes: [.foregroundColor: NSColor.systemGreen, .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)]
+        )
+        statusItem.tag = 100
+        menu.addItem(statusItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let demoItem = NSMenuItem(title: "Open Demo UI", action: #selector(openDemo), keyEquivalent: "d")
+        demoItem.target = self
+        menu.addItem(demoItem)
+
+        let healthItem = NSMenuItem(title: "Check Health", action: #selector(checkHealth), keyEquivalent: "h")
+        healthItem.target = self
+        menu.addItem(healthItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let copyClaudeCmd = NSMenuItem(title: "Copy Claude Code Command", action: #selector(copyClaude), keyEquivalent: "c")
+        copyClaudeCmd.target = self
+        menu.addItem(copyClaudeCmd)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(title: "Quit Indicator", action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        self.statusItem.menu = menu
+
+        // Periodic health check
+        checkTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.updateStatus()
+        }
+    }
+
+    @objc func openDemo() {
+        NSWorkspace.shared.open(URL(string: "http://localhost:\(demoPort)")!)
+    }
+
+    @objc func checkHealth() {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        task.arguments = ["-s", "http://localhost:\(gatewayPort)/health"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        try? task.run()
+        task.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? "No response"
+
+        let alert = NSAlert()
+        alert.messageText = "Gateway Health"
+        alert.informativeText = output
+        alert.alertStyle = .informational
+        alert.runModal()
+    }
+
+    @objc func copyClaude() {
+        let cmd = "ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(cmd, forType: .string)
+    }
+
+    @objc func quit() {
+        NSApp.terminate(nil)
+    }
+
+    func updateStatus() {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        task.arguments = ["-s", "--connect-timeout", "2", "http://localhost:\(gatewayPort)/health"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        try? task.run()
+        task.waitUntilExit()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let running = task.terminationStatus == 0
+            if let button = self.statusItem.button {
+                button.title = running ? "⚡️CG" : "💤CG"
+            }
+            if let menu = self.statusItem.menu, let item = menu.item(withTag: 100) {
+                let (text, color) = running
+                    ? ("● Running", NSColor.systemGreen)
+                    : ("○ Stopped", NSColor.systemGray)
+                item.attributedTitle = NSAttributedString(
+                    string: text,
+                    attributes: [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)]
+                )
+            }
+        }
+    }
+}
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)  // no dock icon, menu bar only
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
