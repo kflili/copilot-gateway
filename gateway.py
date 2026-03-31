@@ -583,6 +583,19 @@ def main():
     # Pre-warm model cache
     models_cache.get()
 
+    # Launch demo app (serves UI on port 8788)
+    demo_proc = None
+    demo_script = HERE / "demo.py"
+    if demo_script.exists():
+        try:
+            demo_proc = subprocess.Popen(
+                [sys.executable, str(demo_script)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            log(f"demo app started (PID {demo_proc.pid}) → http://localhost:8788")
+        except Exception as e:
+            log(f"demo app failed: {e}")
+
     # Launch menu bar indicator if binary exists
     menubar_proc = None
     menubar_bin = HERE / "menubar"
@@ -599,6 +612,8 @@ def main():
     except KeyboardInterrupt:
         print("\n[gateway] shutting down.")
         server.server_close()
+        if demo_proc:
+            demo_proc.terminate()
         if menubar_proc:
             menubar_proc.terminate()
 
