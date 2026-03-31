@@ -46,11 +46,26 @@ GitHub Copilot subscription (via employee/enterprise plan) includes access to al
 ## Quick Start
 
 ```bash
-# First time: login with VS Code OAuth (one-time, opens browser)
+cd ~/Projects/copilot-gateway
+
+# First time only: login with VS Code OAuth (opens browser)
 python3 gateway.py --mode vscode
 
-# Subsequent runs: auto-detects saved token
+# ── After first login, pick what you need: ──
+
+# Gateway only (for products to connect to localhost:8787)
 python3 gateway.py
+
+# Demo UI with model comparison (localhost:8788, auto-starts gateway)
+python3 demo.py
+
+# Claude Code CLI through the gateway
+ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude
+
+# All three at once (3 terminals):
+python3 gateway.py                                                          # terminal 1
+python3 demo.py                                                             # terminal 2
+ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude   # terminal 3
 ```
 
 Zero Python dependencies. Python 3.7+ stdlib only.
