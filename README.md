@@ -168,6 +168,11 @@ curl http://localhost:8787/v1/chat/completions \
 curl http://localhost:8787/v1/responses \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-5.4","input":"Hello"}'
+
+# Claude with extended thinking
+curl http://localhost:8787/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-opus-4.6","max_tokens":8000,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":"Solve this step by step: what is 27*43?"}]}'
 ```
 
 ## Gateway Endpoints
@@ -221,6 +226,7 @@ Split-pane UI with:
 | `docs/research.md` | How the Copilot API was discovered and how auth works |
 | `docs/copilot-cli-internals.md` | Full reverse-engineering of the Copilot CLI |
 | `docs/building-lightweight-cli.md` | Guide to building your own CLI |
+| `docs/claude-code-integration.md` | Using the gateway with Claude Code CLI (backup/setup/restore) |
 
 ## How Auth Works
 

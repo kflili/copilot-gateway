@@ -169,6 +169,31 @@ From response headers and CLI source:
 - **Fireworks** hosts router models
 - Proxy infrastructure: `copilot-proxy.githubusercontent.com`, `proxy.enterprise.githubcopilot.com`
 
+## Extended Thinking (Claude)
+
+The Copilot API supports Claude's extended thinking feature. Confirmed working for:
+
+| Model | Thinking | Budget Range |
+|---|---|---|
+| `claude-opus-4.6` | Yes | 1,024 – 32,000 tokens |
+| `claude-opus-4.6-1m` | Yes | 1,024 – 32,000 tokens |
+| `claude-sonnet-4.6` | Yes | 1,024 – 32,000 tokens |
+| `claude-sonnet-4.5` | No | — |
+| `claude-opus-4.5` | No | — |
+| `claude-haiku-4.5` | No | — |
+
+To use it, add `"thinking": {"type": "enabled", "budget_tokens": 4096}` to the `/v1/messages` request body. The thinking content comes back as a `type: "thinking"` block before the answer — identical to the native Anthropic API.
+
+## Goldeneye Model
+
+`goldeneye` is Microsoft's internal model, not from an external company:
+- **Vendor**: Azure OpenAI (Microsoft-hosted)
+- **Response model ID**: `capi-eus-ptuc-gb300-oswe-vscode-large` (Copilot API, East US, GB300 GPU cluster, OSWE agent model, vscode-large)
+- **Specs**: 400K context, 128K output, vision, tool use — matches GPT-5.4 class
+- **Tokenizer**: `o200k_base` (same as GPT-4o/GPT-5 family)
+- **Access**: VS Code mode only. CLI mode returns "model_not_supported".
+- **Status**: "(Internal Only)" — available to Microsoft employees via `MicrosoftCopilot` org feature flags
+
 ## Gemini Model Availability (March 2026)
 
 - **Gemini 3 Pro**: Deprecated March 26, 2026. Removed from CLI v1.0.13+.

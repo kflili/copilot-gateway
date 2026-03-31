@@ -333,7 +333,8 @@ async function sendMessage() {
       const data = await resp.json();
       if (data.model) responseModel = data.model;
       if (data.error) {
-        fullText = `Error: ${data.error}`;
+        const err = typeof data.error === 'object' ? (data.error.message || JSON.stringify(data.error)) : data.error;
+        fullText = `Error: ${err}`;
       } else if (data.output_text) {
         fullText = data.output_text;
       } else if (data.output?.[0]?.content?.[0]?.text) {
