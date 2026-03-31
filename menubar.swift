@@ -51,9 +51,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "Quit Indicator", action: #selector(quit), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
+        let stopItem = NSMenuItem(title: "Stop Gateway & Quit", action: #selector(stopAll), keyEquivalent: "q")
+        stopItem.target = self
+        menu.addItem(stopItem)
 
         self.statusItem.menu = menu
 
@@ -91,7 +91,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setString(cmd, forType: .string)
     }
 
-    @objc func quit() {
+    @objc func stopAll() {
+        // Kill gateway and demo on their ports
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "kill $(lsof -ti:8787) $(lsof -ti:8788) 2>/dev/null"]
+        try? task.run()
+        task.waitUntilExit()
         NSApp.terminate(nil)
     }
 
