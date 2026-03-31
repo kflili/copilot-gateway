@@ -51,24 +51,43 @@ cd ~/Projects/copilot-gateway
 # First time only: login with VS Code OAuth (opens browser)
 python3 gateway.py --mode vscode
 
-# ── After first login, pick what you need: ──
+# ── After first login, use shell aliases: ──
 
-# Gateway only (for products to connect to localhost:8787)
-python3 gateway.py
+cg        # Start gateway + demo + menu bar (backgrounds, returns prompt)
+cgcc      # Claude Code through gateway (skip permissions, like cc)
+cgca      # Claude Code through gateway (auto mode, safer than skip-all)
 
-# Demo UI with model comparison (localhost:8788, auto-starts gateway)
-python3 demo.py
-
-# Claude Code CLI through the gateway
+# Or without aliases:
+python3 gateway.py    # starts gateway + demo UI + ⚡️CG menu bar
 ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude
-
-# All three at once (3 terminals):
-python3 gateway.py                                                          # terminal 1
-python3 demo.py                                                             # terminal 2
-ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude   # terminal 3
 ```
 
 Zero Python dependencies. Python 3.7+ stdlib only.
+
+## Shell Aliases
+
+Add these to `~/.zshrc` (already configured on this machine):
+
+```bash
+# Copilot Gateway
+alias cg="cd ~/Projects/copilot-gateway && nohup python3 gateway.py > logs/gateway-console.log 2>&1 & sleep 3 && echo '⚡️ Gateway running'"
+alias cgcc="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --dangerously-skip-permissions"
+alias cgca="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --enable-auto-mode"
+
+# Claude Code (direct Anthropic API)
+alias cc="claude --dangerously-skip-permissions"
+alias ca="claude --enable-auto-mode"
+```
+
+| Alias | What it does |
+|-------|-------------|
+| `cg` | Start gateway in background (+ demo UI on :8788, + ⚡️CG menu bar) |
+| `cgcc` | Claude Code through gateway, skip all permissions |
+| `cgca` | Claude Code through gateway, auto mode (safer, when available) |
+| `cc` | Claude Code direct, skip all permissions |
+| `ca` | Claude Code direct, auto mode |
+
+**Workflow**: Run `cg` once, then `cgcc` in the same or any other terminal. Stop everything via ⚡️CG menu bar → "Stop Gateway & Quit".
 
 ## Two Auth Modes
 
@@ -216,26 +235,42 @@ curl http://localhost:8787/v1/messages \
 | `--mode vscode` | Use VS Code OAuth token (22 models, first-time login required) |
 | `--login` | Force re-authentication via OAuth device flow |
 
+## What `python3 gateway.py` Launches
+
+A single command starts three processes:
+
+1. **Gateway** on `:8787` — the LLM API proxy
+2. **Demo UI** on `:8788` — chat + call flow visualization
+3. **⚡️CG menu bar** — macOS status bar indicator
+
+The ⚡️CG menu bar shows:
+- **⚡️CG** when running, **💤CG** when stopped (checks every 30s)
+- **Open Demo UI** — opens `localhost:8788` in browser
+- **Check Health** — shows gateway status popup
+- **Copy Claude Code Command** — copies the `cgcc` env vars to clipboard
+- **Stop Gateway & Quit** — kills gateway, demo, and menu bar in one click
+
+All three are killed together via Ctrl+C or the menu bar stop option.
+
 ## Demo App
 
-```bash
-python3 demo.py          # starts gateway automatically if not running
-open http://localhost:8788
-```
+The demo UI at `localhost:8788` provides:
+- **Left pane**: Chat with any model, model selector grouped by vendor
+- **Right pane**: Real-time call flow log (request bodies, response headers, SSE chunks, timing)
+- **Mode toggle**: VS Code / CLI switch — shows different model lists, API URLs, token types
+- **Draggable split**: Resize panes by dragging the border
+- **Info bar**: Shows API URL, token type, integration ID, model count for current mode
 
-Split-pane UI with:
-- **Left**: Chat with any model, model selector grouped by vendor
-- **Right**: Real-time call flow log (request/response bodies, timing, chunks)
-- **Header**: VS Code / CLI mode toggle, API URL display, model counts
-- **Draggable**: Resize panes by dragging the border
+The demo calls the Copilot API directly (not through the gateway) so it can switch modes per-request.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `gateway.py` | LLM gateway — dual mode, auto-auth, streaming, zero deps |
+| `gateway.py` | LLM gateway — dual mode, auto-auth, streaming, auto-launches demo + menu bar |
 | `demo.py` | Demo web app with call-flow instrumentation |
 | `demo.html` | Split-pane UI (chat + flow log + mode toggle) |
+| `menubar.swift` | macOS menu bar indicator source (compile: `swiftc menubar.swift -o menubar -framework Cocoa`) |
 | `mini-cli.py` | Lightweight terminal CLI (~100 lines) |
 | `test-copilot-api.sh` | End-to-end test script |
 | `docs/research.md` | How the Copilot API was discovered and how auth works |

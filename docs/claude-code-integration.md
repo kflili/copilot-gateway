@@ -56,7 +56,17 @@ This is the safest approach — only affects the current terminal session:
 ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude
 ```
 
-When you close this terminal, Claude Code reverts to normal.
+Or use the shell aliases (pre-configured in `~/.zshrc`):
+
+```bash
+cg      # Start gateway (backgrounds, returns prompt immediately)
+cgcc    # Claude Code through gateway, skip permissions (like cc)
+cgca    # Claude Code through gateway, auto mode (safer, when available on your plan)
+```
+
+When you close the terminal, Claude Code reverts to normal.
+
+**Note on auto mode**: `cgca` / `ca` use `--enable-auto-mode`, which is a safer alternative to `--dangerously-skip-permissions`. A safety classifier reviews each action before it runs. As of March 2026, auto mode is available on Team plan, rolling out to Enterprise. Not yet available on Pro/Max plans — if you see "currently unavailable", this is the reason.
 
 ### Option B: Settings File (persistent)
 
@@ -195,18 +205,22 @@ ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude
 
 ## Switching Between Gateway and Direct Anthropic
 
-If you want to quickly toggle between the gateway and your normal Anthropic API:
+Shell aliases (pre-configured in `~/.zshrc`):
 
 ```bash
-# Use gateway (Copilot-backed)
-alias claude-copilot='ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude'
+# Through Copilot Gateway (start gateway first with cg)
+cg      # start gateway + demo + ⚡️CG menu bar (backgrounds)
+cgcc    # Claude Code through gateway, skip permissions
+cgca    # Claude Code through gateway, auto mode
 
-# Use normal Anthropic API (default)
-alias claude-direct='claude'
+# Direct Anthropic API (normal Claude Code)
+cc      # Claude Code direct, skip permissions
+ca      # Claude Code direct, auto mode
+claude  # Claude Code direct, default permissions
 ```
 
-Add these to your `~/.zshrc` for convenience. Then:
-```bash
-claude-copilot   # → through gateway → Copilot API
-claude           # → normal Anthropic API (default settings)
-```
+The ⚡️CG menu bar icon shows when the gateway is running. Click it for:
+- **Open Demo UI** — browser-based chat with call flow visualization
+- **Check Health** — verify gateway status
+- **Copy Claude Code Command** — copies the env vars to clipboard
+- **Stop Gateway & Quit** — kills everything in one click
