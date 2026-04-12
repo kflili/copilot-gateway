@@ -62,7 +62,7 @@ python3 gateway.py    # starts gateway + demo UI + ⚡️CG menu bar
 ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude
 ```
 
-Zero Python dependencies. Python 3.7+ stdlib only.
+Zero Python dependencies. Python 3.8+ stdlib only.
 
 ## Shell Function & Aliases
 
@@ -75,10 +75,16 @@ cg() {
   local sid
   sid="$(date +%H%M%S)_$(head -c2 /dev/urandom | xxd -p)"
   local logdir="logs/$(date +%Y-%m-%d)/$sid"
-  mkdir -p "$logdir"
+  mkdir -p "$logdir" || return 1
   GATEWAY_SESSION_ID="$sid" nohup python3 gateway.py > "$logdir/console.log" 2>&1 &
+  local pid=$!
   sleep 3
-  echo "⚡️ Gateway running — logs: $logdir"
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "⚡️ Gateway running (PID $pid) — logs: $logdir"
+  else
+    echo "❌ Gateway failed to start — check $logdir/console.log"
+    return 1
+  fi
 }
 alias cgcc="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --dangerously-skip-permissions"
 alias cgca="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --enable-auto-mode"

@@ -47,8 +47,12 @@ LOG_DIR = HERE / "logs"
 
 # ─── Per-Session Logging ─────────────────────────────────────────────────────
 
+import re
+
 gw_logger = logging.getLogger("gateway")
-SESSION_LOG_DIR: pathlib.Path | None = None  # set in setup_logging()
+SESSION_LOG_DIR = None  # type: pathlib.Path | None  # set in setup_logging()
+
+_VALID_SESSION_ID = re.compile(r'^[A-Za-z0-9_-]+$')
 
 
 def _generate_session_id() -> str:
@@ -65,7 +69,9 @@ def setup_logging() -> pathlib.Path:
     """
     global SESSION_LOG_DIR
 
-    session_id = os.environ.get("GATEWAY_SESSION_ID") or _generate_session_id()
+    session_id = os.environ.get("GATEWAY_SESSION_ID", "")
+    if not session_id or not _VALID_SESSION_ID.match(session_id):
+        session_id = _generate_session_id()
     date_str = datetime.now().strftime("%Y-%m-%d")
     session_dir = LOG_DIR / date_str / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -85,12 +91,18 @@ def setup_logging() -> pathlib.Path:
     relative_target = pathlib.Path(date_str) / session_id
     try:
         tmp_link = LOG_DIR / f".latest_tmp_{os.getpid()}"
-        tmp_link.unlink(missing_ok=True)
+        try:
+            tmp_link.unlink()
+        except FileNotFoundError:
+            pass
         tmp_link.symlink_to(relative_target)
         tmp_link.rename(latest)
     except OSError:
         try:
-            latest.unlink(missing_ok=True)
+            try:
+                latest.unlink()
+            except FileNotFoundError:
+                pass
             latest.symlink_to(relative_target)
         except OSError:
             pass  # non-fatal — logs still work, just no convenience symlink
@@ -640,6 +652,9 @@ def main():
             log(f"demo app started (PID {demo_proc.pid}) → http://localhost:8788")
         except Exception as e:
             log(f"demo app failed: {e}")
+            if demo_log_file:
+                demo_log_file.close()
+                demo_log_file = None
 
     # Launch menu bar indicator if binary exists
     menubar_proc = None
