@@ -113,7 +113,14 @@ claude
 # In Claude Code, try a simple prompt to verify the connection works
 ```
 
-If it works, you'll see normal Claude Code behavior. The gateway logs will show the requests flowing through.
+If it works, you'll see normal Claude Code behavior. The gateway logs will show the requests flowing through:
+
+```bash
+# Tail the latest gateway session logs
+tail -f logs/latest/gateway.log
+```
+
+You should see `POST /v1/messages` requests with streamed responses. If the log is silent, Claude Code is not using the gateway.
 
 ## Restoring Original Settings
 
@@ -205,11 +212,11 @@ ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude
 
 ## Switching Between Gateway and Direct Anthropic
 
-Shell aliases (pre-configured in `~/.zshrc`):
+Shell function and aliases (pre-configured in `~/.zshrc`):
 
 ```bash
 # Through Copilot Gateway (start gateway first with cg)
-cg      # start gateway + demo + ⚡️CG menu bar (backgrounds)
+cg      # start gateway + demo + ⚡️CG menu bar (per-session logs, backgrounds)
 cgcc    # Claude Code through gateway, skip permissions
 cgca    # Claude Code through gateway, auto mode
 
@@ -217,6 +224,12 @@ cgca    # Claude Code through gateway, auto mode
 cc      # Claude Code direct, skip permissions
 ca      # Claude Code direct, auto mode
 claude  # Claude Code direct, default permissions
+```
+
+**Troubleshooting:** If `cgcc` isn't working, check that the gateway is running and inspect the logs:
+```bash
+curl http://localhost:8787/health        # is gateway alive?
+tail -f logs/latest/gateway.log          # what's happening?
 ```
 
 The ⚡️CG menu bar icon shows when the gateway is running. Click it for:

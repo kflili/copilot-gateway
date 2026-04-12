@@ -51,7 +51,7 @@ cd ~/Projects/copilot-gateway
 # First time only: login with VS Code OAuth (opens browser)
 python3 gateway.py --mode vscode
 
-# ── After first login, use shell aliases: ──
+# ── After first login, use shell function/aliases: ──
 
 cg        # Start gateway + demo + menu bar (backgrounds, returns prompt)
 cgcc      # Claude Code through gateway (skip permissions, like cc)
@@ -64,13 +64,22 @@ ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude
 
 Zero Python dependencies. Python 3.7+ stdlib only.
 
-## Shell Aliases
+## Shell Function & Aliases
 
 Add these to `~/.zshrc` (already configured on this machine):
 
 ```bash
 # Copilot Gateway
-alias cg="cd ~/Projects/copilot-gateway && nohup python3 gateway.py > logs/gateway-console.log 2>&1 & sleep 3 && echo '⚡️ Gateway running'"
+cg() {
+  cd ~/Projects/copilot-gateway || return 1
+  local sid
+  sid="$(date +%H%M%S)_$(head -c2 /dev/urandom | xxd -p)"
+  local logdir="logs/$(date +%Y-%m-%d)/$sid"
+  mkdir -p "$logdir"
+  GATEWAY_SESSION_ID="$sid" nohup python3 gateway.py > "$logdir/console.log" 2>&1 &
+  sleep 3
+  echo "⚡️ Gateway running — logs: $logdir"
+}
 alias cgcc="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --dangerously-skip-permissions"
 alias cgca="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --enable-auto-mode"
 
@@ -79,9 +88,9 @@ alias cc="claude --dangerously-skip-permissions"
 alias ca="claude --enable-auto-mode"
 ```
 
-| Alias | What it does |
-|-------|-------------|
-| `cg` | Start gateway in background (+ demo UI on :8788, + ⚡️CG menu bar) |
+| Command | What it does |
+|---------|-------------|
+| `cg` | Start gateway in background (+ demo UI on :8788, + ⚡️CG menu bar) with per-session logs |
 | `cgcc` | Claude Code through gateway, skip all permissions |
 | `cgca` | Claude Code through gateway, auto mode (safer, when available) |
 | `cc` | Claude Code direct, skip all permissions |
@@ -227,6 +236,7 @@ curl http://localhost:8787/v1/messages \
 | `GATEWAY_HOST` | `127.0.0.1` | Listen address |
 | `GATEWAY_PORT` | `8787` | Listen port |
 | `GATEWAY_UPSTREAM` | `https://api.githubcopilot.com` | Upstream API (auto-resolved to enterprise for enterprise plans) |
+| `GATEWAY_SESSION_ID` | (auto-generated) | Override the session ID for log directory naming |
 | `GITHUB_TOKEN` | (from `gh auth token`) | GitHub token override |
 
 | CLI Flag | Description |
@@ -234,6 +244,41 @@ curl http://localhost:8787/v1/messages \
 | `--mode cli` | Use gh CLI token (19 models) |
 | `--mode vscode` | Use VS Code OAuth token (22 models, first-time login required) |
 | `--login` | Force re-authentication via OAuth device flow |
+
+## Logging
+
+Each gateway launch creates its own log directory under a dated folder. Multiple launches on the same day produce separate log sets.
+
+```
+logs/
+├── latest -> 2026-04-09/143022_a3f1/    # symlink to newest session
+├── 2026-04-09/
+│   ├── 143022_a3f1/                     # 1st launch
+│   │   ├── gateway.log                  # gateway request/response logs
+│   │   ├── console.log                  # stdout/stderr (cg only)
+│   │   └── demo.log                     # demo app output
+│   └── 151500_b7e2/                     # 2nd launch
+│       ├── gateway.log
+│       ├── console.log
+│       └── demo.log
+└── 2026-04-10/
+    └── ...
+```
+
+**Tailing the latest session:**
+```bash
+tail -f logs/latest/gateway.log          # live request log
+tail -f logs/latest/console.log          # full console output (cg launch only)
+```
+
+**Cleanup:** logs are never auto-deleted. Remove old dated folders when needed:
+```bash
+rm -rf logs/2026-04-01/                  # delete a specific day
+```
+
+**Note:** When using `python3 gateway.py` directly (not via `cg`), gateway logs are written to the session directory and also printed to the terminal. There is no `console.log` in this case — it's only created by the `cg` shell function's redirect.
+
+**Concurrent launches:** If multiple gateways start simultaneously, `logs/latest` points to whichever started last. Each launch still gets its own distinct session directory.
 
 ## What `python3 gateway.py` Launches
 

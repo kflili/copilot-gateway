@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import pathlib
+import secrets
 import subprocess
 import sys
 import threading
@@ -44,19 +45,57 @@ UPSTREAM = os.environ.get("GATEWAY_UPSTREAM", "https://api.githubcopilot.com")
 HERE = pathlib.Path(__file__).parent
 LOG_DIR = HERE / "logs"
 
-# ─── File Logging ─────────────────────────────────────────────────────────────
+# ─── Per-Session Logging ─────────────────────────────────────────────────────
 
-LOG_DIR.mkdir(exist_ok=True)
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_DIR / "gateway.log"),
-        logging.StreamHandler(sys.stdout),
-    ],
-)
 gw_logger = logging.getLogger("gateway")
+SESSION_LOG_DIR: pathlib.Path | None = None  # set in setup_logging()
+
+
+def _generate_session_id() -> str:
+    """Generate a compact session ID: HHMMSS_<4-char-hex>."""
+    ts = datetime.now().strftime("%H%M%S")
+    suffix = secrets.token_hex(2)  # 4 hex chars
+    return f"{ts}_{suffix}"
+
+
+def setup_logging() -> pathlib.Path:
+    """Create per-session log directory and configure logging.
+
+    Returns the session log directory path.
+    """
+    global SESSION_LOG_DIR
+
+    session_id = os.environ.get("GATEWAY_SESSION_ID") or _generate_session_id()
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    session_dir = LOG_DIR / date_str / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    SESSION_LOG_DIR = session_dir
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(session_dir / "gateway.log"),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
+
+    # Update logs/latest symlink (best-effort, atomic)
+    latest = LOG_DIR / "latest"
+    relative_target = pathlib.Path(date_str) / session_id
+    try:
+        tmp_link = LOG_DIR / f".latest_tmp_{os.getpid()}"
+        tmp_link.unlink(missing_ok=True)
+        tmp_link.symlink_to(relative_target)
+        tmp_link.rename(latest)
+    except OSError:
+        try:
+            latest.unlink(missing_ok=True)
+            latest.symlink_to(relative_target)
+        except OSError:
+            pass  # non-fatal — logs still work, just no convenience symlink
+
+    return session_dir
 
 # ─── Token Manager ────────────────────────────────────────────────────────────
 
@@ -526,6 +565,9 @@ def main():
 
     host, port = args.host, args.port
 
+    # Set up per-session logging (must happen before any log() calls)
+    session_dir = setup_logging()
+
     # Resolve mode and token
     saved_token, saved_mode = _load_token()
 
@@ -567,6 +609,7 @@ def main():
     print(f"║  Mode:       {mode:<44}║")
     print(f"║  Upstream:   {upstream:<44}║")
     print(f"║  Token:      {masked_token(token_mgr.token):<44}║")
+    print(f"║  Logs:       {str(session_dir.relative_to(HERE)):<44}║")
     print("╠══════════════════════════════════════════════════════════╣")
     print("║  Endpoints:                                              ║")
     print("║    GET  /v1/models           — list models               ║")
@@ -585,12 +628,14 @@ def main():
 
     # Launch demo app (serves UI on port 8788)
     demo_proc = None
+    demo_log_file = None
     demo_script = HERE / "demo.py"
     if demo_script.exists():
         try:
+            demo_log_file = open(session_dir / "demo.log", "w")
             demo_proc = subprocess.Popen(
                 [sys.executable, str(demo_script)],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdout=demo_log_file, stderr=subprocess.STDOUT,
             )
             log(f"demo app started (PID {demo_proc.pid}) → http://localhost:8788")
         except Exception as e:
@@ -614,6 +659,8 @@ def main():
         server.server_close()
         if demo_proc:
             demo_proc.terminate()
+        if demo_log_file:
+            demo_log_file.close()
         if menubar_proc:
             menubar_proc.terminate()
 
