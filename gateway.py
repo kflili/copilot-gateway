@@ -686,19 +686,13 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                             it, ot, na = _extract_usage_from_event(event, path)
                             input_tokens += it
                             output_tokens += ot
-                            nano_aiu += na
+                            nano_aiu = max(nano_aiu, na)
                         except (json.JSONDecodeError, ValueError):
                             pass
 
             log(f"  ← {resp.status} streamed {total} bytes"
                 f" (in={input_tokens}, out={output_tokens})")
-            if request_stats:
-                if input_tokens or output_tokens:
-                    request_stats.record_success(
-                        model, input_tokens, output_tokens, nano_aiu)
-                else:
-                    request_stats.record_success(model, 0, 0, 0)
-                    request_stats.record_parse_failure()
+            self._record_usage(model, input_tokens, output_tokens, nano_aiu)
         else:
             data = resp.read()
             self.wfile.write(data)
@@ -711,13 +705,18 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 pass
             log(f"  ← {resp.status} ({len(data)} bytes)"
                 f" (in={input_tokens}, out={output_tokens})")
-            if request_stats:
-                if input_tokens or output_tokens:
-                    request_stats.record_success(
-                        model, input_tokens, output_tokens, nano_aiu)
-                else:
-                    request_stats.record_success(model, 0, 0, 0)
-                    request_stats.record_parse_failure()
+            self._record_usage(model, input_tokens, output_tokens, nano_aiu)
+
+    def _record_usage(self, model: str, input_tokens: int, output_tokens: int,
+                      nano_aiu: int):
+        """Record usage into global stats tracker."""
+        if not request_stats:
+            return
+        if input_tokens or output_tokens:
+            request_stats.record_success(model, input_tokens, output_tokens, nano_aiu)
+        else:
+            request_stats.record_success(model, 0, 0, 0)
+            request_stats.record_parse_failure()
 
     def _do_upstream(self, method, url, headers, body):
         """Returns (response, None, None) on success or (None, error_body, status_code) on error."""

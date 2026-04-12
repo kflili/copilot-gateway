@@ -66,7 +66,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.statusItem.menu = menu
 
-        // Periodic health + stats check
+        // Periodic stats polling (also determines running/stopped status)
         checkTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             self?.updateStatus()
         }

@@ -232,7 +232,8 @@ curl http://localhost:8787/health        # is gateway alive?
 tail -f logs/latest/gateway.log          # what's happening?
 ```
 
-The ⚡️CG menu bar icon shows when the gateway is running. Click it for:
+The ⚡️CG menu bar shows live stats (e.g., `⚡️CG 42↗ 170K`). Click it for:
+- **📊 Stats** — requests, premium requests, token breakdown, uptime
 - **Open Demo UI** — browser-based chat with call flow visualization
 - **Check Health** — verify gateway status
 - **Copy Claude Code Command** — copies the env vars to clipboard
