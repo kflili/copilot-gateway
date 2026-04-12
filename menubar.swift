@@ -4,11 +4,146 @@
 
 import Cocoa
 
+// ─── Log Viewer Panel ────────────────────────────────────────────────────────
+
+class LogViewerController: NSObject, NSWindowDelegate {
+    var window: NSWindow!
+    var textView: NSTextView!
+    var scrollView: NSScrollView!
+    var refreshTimer: Timer?
+    var gatewayPort: String
+
+    init(port: String) {
+        self.gatewayPort = port
+        super.init()
+    }
+
+    func showWindow() {
+        if window != nil {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let frame = NSRect(x: 0, y: 0, width: 720, height: 480)
+        window = NSWindow(
+            contentRect: frame,
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "⚡️ Gateway Logs"
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.level = .floating
+        window.minSize = NSSize(width: 400, height: 200)
+
+        // Dark background scroll view with monospace text
+        scrollView = NSScrollView(frame: window.contentView!.bounds)
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+
+        textView = NSTextView(frame: scrollView.bounds)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.autoresizingMask = [.width]
+        textView.backgroundColor = NSColor(calibratedRed: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
+        textView.textColor = NSColor(calibratedRed: 0.85, green: 0.9, blue: 0.85, alpha: 1.0)
+        textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: scrollView.bounds.width, height: CGFloat.greatestFiniteMagnitude)
+
+        scrollView.documentView = textView
+        window.contentView?.addSubview(scrollView)
+
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Fetch immediately, then every 3 seconds
+        fetchLogs()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            self?.fetchLogs()
+        }
+    }
+
+    func fetchLogs() {
+        let url = URL(string: "http://localhost:\(gatewayPort)/logs?n=500")!
+        let task = URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+            guard let self = self, let data = data,
+                  let text = String(data: data, encoding: .utf8) else { return }
+
+            DispatchQueue.main.async {
+                let wasAtBottom = self.isScrolledToBottom()
+                self.applyColoredLog(text)
+                if wasAtBottom {
+                    self.scrollToBottom()
+                }
+            }
+        }
+        task.resume()
+    }
+
+    func applyColoredLog(_ text: String) {
+        let storage = NSMutableAttributedString()
+        let defaultAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor(calibratedRed: 0.85, green: 0.9, blue: 0.85, alpha: 1.0),
+        ]
+
+        for line in text.components(separatedBy: "\n") {
+            var color = defaultAttrs[.foregroundColor] as! NSColor
+
+            if line.contains("ERROR") || line.contains("error") {
+                color = NSColor.systemRed
+            } else if line.contains("← 401") || line.contains("← 4") || line.contains("← 5") {
+                color = NSColor.systemOrange
+            } else if line.contains("POST /v1/messages") || line.contains("POST /chat/completions") || line.contains("POST /v1/responses") {
+                color = NSColor.systemCyan
+            } else if line.contains("(in=") && line.contains("out=") {
+                color = NSColor.systemGreen
+            } else if line.contains("streamed") {
+                color = NSColor(calibratedRed: 0.6, green: 0.8, blue: 0.6, alpha: 1.0)
+            }
+
+            var attrs = defaultAttrs
+            attrs[.foregroundColor] = color
+            storage.append(NSAttributedString(string: line + "\n", attributes: attrs))
+        }
+
+        textView.textStorage?.setAttributedString(storage)
+    }
+
+    func isScrolledToBottom() -> Bool {
+        let clipView = scrollView.contentView
+        let viewHeight = scrollView.documentVisibleRect.height
+        let contentHeight = textView.bounds.height
+        let scrollY = clipView.bounds.origin.y
+        return scrollY + viewHeight >= contentHeight - 20
+    }
+
+    func scrollToBottom() {
+        textView.scrollToEndOfDocument(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+}
+
+// ─── App Delegate ────────────────────────────────────────────────────────────
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var gatewayPort: String = "8787"
     var demoPort: String = "8788"
     var checkTimer: Timer?
+    var logViewer: LogViewerController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -51,6 +186,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let healthItem = NSMenuItem(title: "Check Health", action: #selector(checkHealth), keyEquivalent: "h")
         healthItem.target = self
         menu.addItem(healthItem)
+
+        let logsItem = NSMenuItem(title: "View Logs", action: #selector(openLogViewer), keyEquivalent: "l")
+        logsItem.target = self
+        menu.addItem(logsItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -96,6 +235,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = output
         alert.alertStyle = .informational
         alert.runModal()
+    }
+
+    @objc func openLogViewer() {
+        if logViewer == nil {
+            logViewer = LogViewerController(port: gatewayPort)
+        }
+        logViewer?.showWindow()
     }
 
     @objc func copyClaude() {

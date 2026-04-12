@@ -17,6 +17,7 @@ Endpoints:
   POST /v1/responses           — OpenAI Responses API (GPT-5.4)
   GET  /health                 — health check
   GET  /stats                  — token usage stats
+  GET  /logs                   — recent gateway log lines
 
 Usage:
   python3 gateway.py                          # uses gh auth token
@@ -515,6 +516,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self._handle_health()
         elif path == "/stats":
             self._handle_stats()
+        elif path == "/logs":
+            self._handle_logs()
         else:
             self._forward()
 
@@ -596,6 +599,32 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
         self._cors_headers()
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # ── /logs ──
+
+    def _handle_logs(self):
+        """Return the last N lines of gateway.log. ?n=100 for line count (default 200)."""
+        import urllib.parse as urlparse
+        qs = urlparse.parse_qs(urlparse.urlparse(self.path).query)
+        n = min(int(qs.get("n", ["200"])[0]), 2000)
+
+        log_file = SESSION_LOG_DIR / "gateway.log" if SESSION_LOG_DIR else None
+        if log_file and log_file.exists():
+            try:
+                lines = log_file.read_text(errors="replace").splitlines()
+                tail = lines[-n:] if len(lines) > n else lines
+                body = "\n".join(tail).encode()
+            except Exception:
+                body = b"(error reading log file)"
+        else:
+            body = b"(no log file found)"
+
+        self.send_response(200)
+        self._cors_headers()
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -858,6 +887,7 @@ def main():
     print("║    POST /v1/responses        — OpenAI Responses API      ║")
     print("║    GET  /health              — health check              ║")
     print("║    GET  /stats               — token usage stats         ║")
+    print("║    GET  /logs                — recent gateway log lines  ║")
     print("╠══════════════════════════════════════════════════════════╣")
     print("║  Usage:  any client → http://localhost:8787              ║")
     print("║          api_key = \"dummy\"  (ignored)                   ║")

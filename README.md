@@ -235,6 +235,7 @@ curl http://localhost:8787/v1/messages \
 | `POST` | `/v1/responses` | OpenAI Responses API (GPT-5.4, Goldeneye) |
 | `GET` | `/health` | Health check with token/upstream/mode/request count |
 | `GET` | `/stats` | Token usage stats (requests, tokens, per-model breakdown) |
+| `GET` | `/logs` | Recent gateway log lines (text, ?n=100 for line count) |
 
 ## Configuration
 
@@ -301,6 +302,7 @@ The ⚡️CG menu bar shows:
 - **📊 Stats** — requests, premium requests, input/output token breakdown, uptime
 - **Open Demo UI** — opens `localhost:8788` in browser
 - **Check Health** — shows gateway status popup
+- **View Logs** — opens a floating log viewer panel with color-coded live tail (⌘L)
 - **Copy Claude Code Command** — copies the `cgcc` env vars to clipboard
 - **Stop Gateway & Quit** — kills gateway, demo, and menu bar in one click
 
