@@ -200,6 +200,16 @@ Or in `~/.claude/settings.json`:
 }
 ```
 
+### AionUi (Auto-detection)
+
+AionUi automatically detects the gateway when spawning Claude Code sessions (both Rich UI and Terminal modes). No manual configuration needed — just start the gateway and launch a Claude session in AionUi.
+
+**How it works:** Before each Claude spawn, AionUi probes `http://localhost:8787/health` (300ms timeout). If the gateway responds with `{"status":"ok"}`, it injects `ANTHROPIC_BASE_URL` and a dummy auth token into the spawned process. If the gateway isn't running, Claude uses the default API path.
+
+**Settings toggle:** In AionUi, go to **Settings → Agent CLI → Copilot Gateway** to enable/disable auto-detection (enabled by default).
+
+**Known limitation:** The Copilot API does not support Anthropic's `context_management` (server-side compaction) feature. The gateway automatically strips this field from requests. Claude Code handles context management client-side, so this has no practical impact.
+
 ### curl
 
 ```bash

@@ -653,12 +653,21 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 req_json = json.loads(body)
                 is_stream = req_json.get("stream", False)
                 model = req_json.get("model", "unknown")
+                # Strip fields not accepted by the Copilot API
+                stripped = []
+                for field in ("context_management",):
+                    if field in req_json:
+                        del req_json[field]
+                        stripped.append(field)
+                if stripped:
+                    body = json.dumps(req_json).encode()
+                    log(f"  stripped unsupported fields: {stripped}")
             except (json.JSONDecodeError, AttributeError):
                 pass
 
         # Build upstream request
         url = _get_upstream() + path
-        headers = self._upstream_headers(content_length)
+        headers = self._upstream_headers(len(body) if body else 0)
 
         log(f"{method} {path} → {url} (model={model}, stream={is_stream})")
 
