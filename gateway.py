@@ -16,6 +16,7 @@ Endpoints:
   POST /chat/completions       — OpenAI Chat Completions API (alias)
   POST /v1/responses           — OpenAI Responses API (GPT-5.4)
   GET  /health                 — health check
+  GET  /stats                  — token usage stats
 
 Usage:
   python3 gateway.py                          # uses gh auth token
@@ -342,6 +343,161 @@ def log(msg: str):
 def masked_token(t: str) -> str:
     return t[:6] + "..." + t[-4:] if len(t) > 10 else "****"
 
+# ─── Request Stats Tracker ────────────────────────────────────────────────────
+
+# Billing multipliers from Copilot CLI internals (nano-AIU based)
+BILLING_MULTIPLIERS = {
+    "claude-haiku-4.5": 0.333,
+    "claude-haiku-4-5-20251001": 0.333,
+    "claude-sonnet-4.5": 1.0,
+    "claude-sonnet-4-5-20250514": 1.0,
+    "claude-sonnet-4.6": 1.0,
+    "claude-sonnet-4-6-20250514": 1.0,
+    "claude-sonnet-4": 1.0,
+    "claude-opus-4.5": 3.0,
+    "claude-opus-4.6": 3.0,
+    "claude-opus-4-6-20250514": 3.0,
+    "claude-opus-4.6-1m": 6.0,
+    "claude-opus-4.6-fast": 30.0,
+    "gpt-4.1": 0.0,
+    "gpt-5-mini": 0.0,
+    "gpt-5.4-mini": 0.0,
+}
+
+
+class RequestStats:
+    """Thread-safe accumulator for request and token usage stats."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._start_time = time.time()
+        self._requests_succeeded = 0
+        self._requests_failed = 0
+        self._usage_parse_failures = 0
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
+        self._estimated_premium = 0.0
+        self._models = {}  # model -> {requests, input_tokens, output_tokens, premium_requests}
+        self._last_request_at = None  # type: str | None
+
+    def record_success(self, model: str, input_tokens: int, output_tokens: int,
+                       nano_aiu: int = 0):
+        """Record a successful request with usage data."""
+        multiplier = BILLING_MULTIPLIERS.get(model, 1.0)
+        premium = nano_aiu / 1_000_000_000 if nano_aiu else multiplier
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        with self._lock:
+            self._requests_succeeded += 1
+            self._total_input_tokens += input_tokens
+            self._total_output_tokens += output_tokens
+            self._estimated_premium += premium
+            self._last_request_at = now
+
+            if model not in self._models:
+                self._models[model] = {
+                    "requests": 0, "input_tokens": 0,
+                    "output_tokens": 0, "premium_requests": 0.0,
+                }
+            m = self._models[model]
+            m["requests"] += 1
+            m["input_tokens"] += input_tokens
+            m["output_tokens"] += output_tokens
+            m["premium_requests"] += premium
+
+    def record_failure(self):
+        with self._lock:
+            self._requests_failed += 1
+
+    def record_parse_failure(self):
+        with self._lock:
+            self._usage_parse_failures += 1
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            total_tokens = self._total_input_tokens + self._total_output_tokens
+            return {
+                "session_start": datetime.utcfromtimestamp(self._start_time).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"),
+                "uptime_seconds": int(time.time() - self._start_time),
+                "requests_succeeded": self._requests_succeeded,
+                "requests_failed": self._requests_failed,
+                "usage_parse_failures": self._usage_parse_failures,
+                "total_input_tokens": self._total_input_tokens,
+                "total_output_tokens": self._total_output_tokens,
+                "total_tokens": total_tokens,
+                "estimated_premium_requests": round(self._estimated_premium, 2),
+                "models": {k: dict(v) for k, v in self._models.items()},
+                "last_request_at": self._last_request_at,
+            }
+
+
+# Global stats — initialized in main()
+request_stats = None  # type: RequestStats | None
+
+# ─── Usage Extraction ─────────────────────────────────────────────────────────
+
+def _extract_usage_from_response(resp_json: dict, path: str) -> tuple:
+    """Extract (input_tokens, output_tokens, nano_aiu) from a non-streamed response."""
+    nano_aiu = 0
+    copilot_usage = resp_json.get("copilot_usage", {})
+    if copilot_usage:
+        nano_aiu = copilot_usage.get("total_nano_aiu", 0)
+
+    if "/messages" in path:
+        # Anthropic format
+        usage = resp_json.get("usage", {})
+        return (usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0), nano_aiu)
+    elif "/responses" in path:
+        # OpenAI Responses format
+        usage = resp_json.get("usage", {})
+        return (usage.get("input_tokens", usage.get("prompt_tokens", 0)),
+                usage.get("output_tokens", usage.get("completion_tokens", 0)),
+                nano_aiu)
+    else:
+        # OpenAI Chat Completions format
+        usage = resp_json.get("usage", {})
+        return (usage.get("prompt_tokens", 0),
+                usage.get("completion_tokens", 0), nano_aiu)
+
+
+def _extract_usage_from_event(event: dict, path: str) -> tuple:
+    """Extract (input_tokens, output_tokens, nano_aiu) from a single SSE event."""
+    nano_aiu = 0
+    copilot_usage = event.get("copilot_usage", {})
+    if copilot_usage:
+        nano_aiu = copilot_usage.get("total_nano_aiu", 0)
+
+    if "/messages" in path:
+        # Anthropic SSE: message_start has input, message_delta has output
+        evt_type = event.get("type", "")
+        if evt_type == "message_start":
+            msg = event.get("message", {})
+            usage = msg.get("usage", {})
+            return (usage.get("input_tokens", 0), 0, nano_aiu)
+        elif evt_type == "message_delta":
+            usage = event.get("usage", {})
+            return (0, usage.get("output_tokens", 0), nano_aiu)
+    elif "/responses" in path:
+        # OpenAI Responses SSE: response.completed has usage
+        evt_type = event.get("type", "")
+        if evt_type == "response.completed":
+            resp = event.get("response", {})
+            usage = resp.get("usage", {})
+            return (usage.get("input_tokens", usage.get("prompt_tokens", 0)),
+                    usage.get("output_tokens", usage.get("completion_tokens", 0)),
+                    nano_aiu)
+    else:
+        # OpenAI Chat SSE: final chunk may have usage
+        usage = event.get("usage", {})
+        if usage:
+            return (usage.get("prompt_tokens", 0),
+                    usage.get("completion_tokens", 0), nano_aiu)
+
+    return (0, 0, nano_aiu)
+
+
 # ─── Gateway Handler ──────────────────────────────────────────────────────────
 
 class GatewayHandler(http.server.BaseHTTPRequestHandler):
@@ -357,6 +513,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self._handle_models()
         elif path == "/health":
             self._handle_health()
+        elif path == "/stats":
+            self._handle_stats()
         else:
             self._forward()
 
@@ -409,14 +567,34 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
     # ── /health ──
 
     def _handle_health(self):
-        body = json.dumps({
+        health = {
             "status": "ok",
             "upstream": _get_upstream(),
             "mode": token_mgr.mode if token_mgr else "?",
             "models_cached": len(models_cache.get()),
             "token_present": bool(token_mgr.token),
-        }).encode()
+        }
+        if request_stats:
+            snap = request_stats.snapshot()
+            health["requests"] = snap["requests_succeeded"]
+            health["tokens"] = snap["total_tokens"]
+        body = json.dumps(health).encode()
         self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # ── /stats ──
+
+    def _handle_stats(self):
+        if not request_stats:
+            body = b'{"error":"stats not initialized"}'
+            self.send_response(503)
+        else:
+            body = json.dumps(request_stats.snapshot(), indent=2).encode()
+            self.send_response(200)
+        self._cors_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -438,11 +616,14 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length else None
 
-        # Detect streaming
+        # Parse request body for stream flag and model name
         is_stream = False
+        model = "unknown"
         if body:
             try:
-                is_stream = json.loads(body).get("stream", False)
+                req_json = json.loads(body)
+                is_stream = req_json.get("stream", False)
+                model = req_json.get("model", "unknown")
             except (json.JSONDecodeError, AttributeError):
                 pass
 
@@ -450,7 +631,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         url = _get_upstream() + path
         headers = self._upstream_headers(content_length)
 
-        log(f"{method} {path} → {url} (stream={is_stream})")
+        log(f"{method} {path} → {url} (model={model}, stream={is_stream})")
 
         # Try the request, auto-refresh token on 401
         resp, error_body, error_code = self._do_upstream(method, url, headers, body)
@@ -468,6 +649,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(error_body or b'{"error":"upstream unavailable"}')
             log(f"  ← {error_code or 502} error")
+            if request_stats:
+                request_stats.record_failure()
             return
 
         # Forward success response
@@ -480,6 +663,10 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
 
         if is_stream:
             total = 0
+            input_tokens = 0
+            output_tokens = 0
+            nano_aiu = 0
+            line_buf = b""
             while True:
                 chunk = resp.read(4096)
                 if not chunk:
@@ -487,11 +674,50 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 self.wfile.flush()
                 total += len(chunk)
-            log(f"  ← {resp.status} streamed {total} bytes")
+
+                # Incremental SSE line scanning for usage data
+                line_buf += chunk
+                while b"\n" in line_buf:
+                    line, line_buf = line_buf.split(b"\n", 1)
+                    line_str = line.decode("utf-8", errors="replace").strip()
+                    if line_str.startswith("data: ") and "usage" in line_str:
+                        try:
+                            event = json.loads(line_str[6:])
+                            it, ot, na = _extract_usage_from_event(event, path)
+                            input_tokens += it
+                            output_tokens += ot
+                            nano_aiu += na
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+
+            log(f"  ← {resp.status} streamed {total} bytes"
+                f" (in={input_tokens}, out={output_tokens})")
+            if request_stats:
+                if input_tokens or output_tokens:
+                    request_stats.record_success(
+                        model, input_tokens, output_tokens, nano_aiu)
+                else:
+                    request_stats.record_success(model, 0, 0, 0)
+                    request_stats.record_parse_failure()
         else:
             data = resp.read()
             self.wfile.write(data)
-            log(f"  ← {resp.status} ({len(data)} bytes)")
+            input_tokens, output_tokens, nano_aiu = 0, 0, 0
+            try:
+                resp_json = json.loads(data)
+                input_tokens, output_tokens, nano_aiu = _extract_usage_from_response(
+                    resp_json, path)
+            except (json.JSONDecodeError, ValueError):
+                pass
+            log(f"  ← {resp.status} ({len(data)} bytes)"
+                f" (in={input_tokens}, out={output_tokens})")
+            if request_stats:
+                if input_tokens or output_tokens:
+                    request_stats.record_success(
+                        model, input_tokens, output_tokens, nano_aiu)
+                else:
+                    request_stats.record_success(model, 0, 0, 0)
+                    request_stats.record_parse_failure()
 
     def _do_upstream(self, method, url, headers, body):
         """Returns (response, None, None) on success or (None, error_body, status_code) on error."""
@@ -508,9 +734,9 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         headers = {}
         for key in self.headers:
             lk = key.lower()
-            # Drop client auth and hop-by-hop headers — we supply our own auth
+            # Drop client auth, hop-by-hop, and encoding headers
             if lk in ("host", "connection", "transfer-encoding",
-                       "x-api-key", "authorization"):
+                       "x-api-key", "authorization", "accept-encoding"):
                 continue
             headers[key] = self.headers[key]
         headers["Authorization"] = f"Bearer {token_mgr.token}"
@@ -562,7 +788,7 @@ def _load_token() -> tuple[str, str] | tuple[None, None]:
 
 
 def main():
-    global token_mgr
+    global token_mgr, request_stats
     import argparse
     parser = argparse.ArgumentParser(description="Copilot LLM Gateway")
     parser.add_argument("--port", type=int, default=LISTEN_PORT)
@@ -579,6 +805,9 @@ def main():
 
     # Set up per-session logging (must happen before any log() calls)
     session_dir = setup_logging()
+
+    # Initialize request stats tracker
+    request_stats = RequestStats()
 
     # Resolve mode and token
     saved_token, saved_mode = _load_token()
@@ -629,6 +858,7 @@ def main():
     print("║    POST /v1/chat/completions — OpenAI API                ║")
     print("║    POST /v1/responses        — OpenAI Responses API      ║")
     print("║    GET  /health              — health check              ║")
+    print("║    GET  /stats               — token usage stats         ║")
     print("╠══════════════════════════════════════════════════════════╣")
     print("║  Usage:  any client → http://localhost:8787              ║")
     print("║          api_key = \"dummy\"  (ignored)                   ║")

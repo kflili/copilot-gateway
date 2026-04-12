@@ -1,6 +1,6 @@
 # Copilot LLM Gateway
 
-A local LLM API gateway that lets **any product** access GitHub Copilot's models (Claude Opus/Sonnet, GPT-5.4, Gemini, MiniMax, Goldeneye, etc.) using standard OpenAI or Anthropic SDK formats. Clients connect with a dummy API key — the gateway handles all GitHub auth automatically.
+A local LLM API gateway that lets **any product** access GitHub Copilot's models (Claude Opus/Sonnet, GPT-5.4, Gemini, MiniMax, Goldeneye, etc.) using standard OpenAI or Anthropic SDK formats. Clients connect with a dummy API key — the gateway handles all GitHub auth automatically. Tracks token usage and shows live stats in the macOS menu bar.
 
 ## Why
 
@@ -233,7 +233,8 @@ curl http://localhost:8787/v1/messages \
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions API |
 | `POST` | `/chat/completions` | OpenAI Chat Completions (alias) |
 | `POST` | `/v1/responses` | OpenAI Responses API (GPT-5.4, Goldeneye) |
-| `GET` | `/health` | Health check with token/upstream/mode status |
+| `GET` | `/health` | Health check with token/upstream/mode/request count |
+| `GET` | `/stats` | Token usage stats (requests, tokens, per-model breakdown) |
 
 ## Configuration
 
@@ -295,7 +296,9 @@ A single command starts three processes:
 3. **⚡️CG menu bar** — macOS status bar indicator
 
 The ⚡️CG menu bar shows:
-- **⚡️CG** when running, **💤CG** when stopped (checks every 30s)
+- **⚡️CG 42↗ 170K** — live request count and total tokens (updates every 30s)
+- **💤CG** when stopped
+- **📊 Stats** — requests, premium requests, input/output token breakdown, uptime
 - **Open Demo UI** — opens `localhost:8788` in browser
 - **Check Health** — shows gateway status popup
 - **Copy Claude Code Command** — copies the `cgcc` env vars to clipboard
