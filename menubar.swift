@@ -338,6 +338,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// Ensure single instance — kill any stale menubar processes from previous runs
+let myPid = ProcessInfo.processInfo.processIdentifier
+let pgrep = Process()
+pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+pgrep.arguments = ["-x", "menubar"]
+let pgrepPipe = Pipe()
+pgrep.standardOutput = pgrepPipe
+try? pgrep.run()
+pgrep.waitUntilExit()
+let pgrepOutput = String(data: pgrepPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+for line in pgrepOutput.components(separatedBy: "\n") {
+    if let pid = Int32(line.trimmingCharacters(in: .whitespaces)), pid != myPid {
+        kill(pid, SIGTERM)
+    }
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)  // no dock icon, menu bar only
 let delegate = AppDelegate()

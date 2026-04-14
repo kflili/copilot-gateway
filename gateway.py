@@ -31,6 +31,7 @@ import logging
 import os
 import pathlib
 import secrets
+import signal
 import subprocess
 import sys
 import threading
@@ -659,6 +660,27 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     if field in req_json:
                         del req_json[field]
                         stripped.append(field)
+                # Strip unsupported cache_control sub-fields (e.g. "scope")
+                def _strip_cc_scope(obj):
+                    if not isinstance(obj, dict):
+                        return
+                    cc = obj.get("cache_control")
+                    if isinstance(cc, dict) and "scope" in cc:
+                        del cc["scope"]
+                        if "cache_control.scope" not in stripped:
+                            stripped.append("cache_control.scope")
+                    # Recurse into content blocks
+                    content = obj.get("content")
+                    if isinstance(content, list):
+                        for block in content:
+                            _strip_cc_scope(block)
+                for msg_list in (req_json.get("system", []),
+                                 req_json.get("messages", [])):
+                    if isinstance(msg_list, list):
+                        for item in msg_list:
+                            _strip_cc_scope(item)
+                    elif isinstance(msg_list, dict):
+                        _strip_cc_scope(msg_list)
                 if stripped:
                     body = json.dumps(req_json).encode()
                     log(f"  stripped unsupported fields: {stripped}")
@@ -929,6 +951,21 @@ def main():
     menubar_proc = None
     menubar_bin = HERE / "menubar"
     if menubar_bin.exists():
+        # Kill any stale menubar processes from previous runs
+        try:
+            result = subprocess.run(
+                ["pgrep", "-x", "menubar"], capture_output=True, text=True
+            )
+            for pid_str in result.stdout.strip().split("\n"):
+                pid_str = pid_str.strip()
+                if pid_str:
+                    try:
+                        os.kill(int(pid_str), signal.SIGTERM)
+                        log(f"killed stale menubar (PID {pid_str})")
+                    except (ProcessLookupError, ValueError):
+                        pass
+        except FileNotFoundError:
+            pass
         try:
             menubar_proc = subprocess.Popen([str(menubar_bin)])
             log(f"menu bar indicator started (PID {menubar_proc.pid})")
