@@ -25,6 +25,7 @@ Usage:
   GITHUB_TOKEN=gho_xxx python3 gateway.py     # explicit token
 """
 
+import gzip
 import http.server
 import json
 import logging
@@ -40,8 +41,18 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
+try:
+    import zstandard as _zstd
+    def _zstd_decompress(data: bytes) -> bytes:
+        return _zstd.ZstdDecompressor().decompress(data, max_output_size=64 * 1024 * 1024)
+except ImportError:
+    _zstd = None
+    def _zstd_decompress(data: bytes) -> bytes:
+        raise RuntimeError("zstandard module not installed — run: pip install zstandard")
+
 # ─── Config ───────────────────────────────────────────────────────────────────
 
+GATEWAY_VERSION = "1.2.0"  # Strip unsupported tools, handle WebSocket GET
 LISTEN_HOST = os.environ.get("GATEWAY_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("GATEWAY_PORT", "8787"))
 UPSTREAM = os.environ.get("GATEWAY_UPSTREAM", "https://api.githubcopilot.com")
@@ -519,6 +530,13 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self._handle_stats()
         elif path == "/logs":
             self._handle_logs()
+        elif path in ("/v1/responses", "/responses"):
+            # Codex CLI sends GET for WebSocket upgrade — we don't support it
+            self.send_response(400)
+            self._cors_headers()
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"WebSocket not supported, use POST"}')
         else:
             self._forward()
 
@@ -573,6 +591,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
     def _handle_health(self):
         health = {
             "status": "ok",
+            "version": GATEWAY_VERSION,
             "upstream": _get_upstream(),
             "mode": token_mgr.mode if token_mgr else "?",
             "models_cached": len(models_cache.get()),
@@ -634,6 +653,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
     # Copilot API paths differ from standard SDK paths in some cases.
     PATH_MAP = {
         "/v1/chat/completions": "/chat/completions",  # OpenAI SDK sends /v1/, Copilot wants no /v1/
+        "/v1/responses": "/responses",
     }
 
     # ── Forward (the core proxy) ──
@@ -645,6 +665,30 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         # Read request body
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length else None
+
+        # Decompress request body if compressed (e.g. Codex CLI sends zstd)
+        if body:
+            encoding = (self.headers.get("Content-Encoding") or "").lower()
+            if encoding == "zstd" or (not encoding and len(body) >= 4 and body[:4] == b'\x28\xb5\x2f\xfd'):
+                try:
+                    body = _zstd_decompress(body)
+                    log("  decompressed zstd request body")
+                except Exception as e:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": f"Failed to decompress zstd body: {e}"}).encode())
+                    return
+            elif encoding == "gzip":
+                try:
+                    body = gzip.decompress(body)
+                    log("  decompressed gzip request body")
+                except Exception as e:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": f"Failed to decompress gzip body: {e}"}).encode())
+                    return
 
         # Parse request body for stream flag and model name
         is_stream = False
@@ -681,9 +725,48 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                             _strip_cc_scope(item)
                     elif isinstance(msg_list, dict):
                         _strip_cc_scope(msg_list)
+                # Pass output_config.effort through unchanged.  Different
+                # Copilot models accept different effort levels (e.g. 4.7
+                # accepts only "medium", 4.6 accepts low/medium/high) and
+                # the supported set may expand over time.  Rather than
+                # maintain a hardcoded allowlist, we forward whatever the
+                # client sent and surface upstream's 400 to the user with
+                # an actionable hint (see error response handling).
+                #
+                # Model rewrite: the base "claude-opus-4.7" model ID has
+                # supportedReasoningEfforts=["medium"] upstream (verified
+                # in Copilot CLI app.js).  Clients like Claude Code that
+                # send /effort high|xhigh on the base ID get rejected.
+                # The 1M-internal variant accepts low/medium/high/xhigh
+                # under a single ID and gives 1M context, so route bare
+                # "claude-opus-4.7" requests there.  Leave explicit
+                # -high / -xhigh / -1m-internal selections alone.
+                if model in ("claude-opus-4.7", "claude-opus-4-7"):
+                    req_json["model"] = "claude-opus-4.7-1m-internal"
+                    model = req_json["model"]
+                    stripped.append("model→4.7-1m-internal")
+                elif model in ("claude-opus-4.6", "claude-opus-4-6"):
+                    req_json["model"] = "claude-opus-4.6-1m"
+                    model = req_json["model"]
+                    stripped.append("model→4.6-1m")
+                # Strip tools not supported by the Copilot API
+                tools = req_json.get("tools")
+                if isinstance(tools, list):
+                    unsupported_tools = {"image_generation"}
+                    original_len = len(tools)
+                    req_json["tools"] = [
+                        t for t in tools
+                        if t.get("type") not in unsupported_tools
+                    ]
+                    removed = original_len - len(req_json["tools"])
+                    if removed:
+                        stripped.append(f"tools({removed} unsupported)")
                 if stripped:
                     body = json.dumps(req_json).encode()
                     log(f"  stripped unsupported fields: {stripped}")
+                # DEBUG: log the effort actually being sent upstream
+                oc_final = req_json.get("output_config") or {}
+                log(f"  → effort sent upstream: {oc_final.get('effort', '<none>')} (model={model})")
             except (json.JSONDecodeError, AttributeError):
                 pass
 
@@ -702,13 +785,25 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             resp, error_body, error_code = self._do_upstream(method, url, headers, body)
 
         if resp is None:
+            # If upstream rejected the effort level, augment the error so
+            # the user sees an actionable hint (e.g. run /effort medium).
+            if error_body and b"invalid_reasoning_effort" in error_body:
+                try:
+                    err_json = json.loads(error_body)
+                    msg = err_json.get("error", {}).get("message", "")
+                    err_json["error"]["message"] = (
+                        msg + "  →  Run /effort to pick a supported level for this model."
+                    )
+                    error_body = json.dumps(err_json).encode()
+                except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
+                    pass
             # Error response
             self.send_response(error_code or 502)
             self._cors_headers()
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(error_body or b'{"error":"upstream unavailable"}')
-            log(f"  ← {error_code or 502} error")
+            log(f"  ← {error_code or 502} error: {(error_body or b'')[:500]}")
             if request_stats:
                 request_stats.record_failure()
             return
@@ -947,10 +1042,10 @@ def main():
                 demo_log_file.close()
                 demo_log_file = None
 
-    # Launch menu bar indicator if binary exists
+    # Launch menu bar indicator if binary exists (skip if app manages menubar)
     menubar_proc = None
     menubar_bin = HERE / "menubar"
-    if menubar_bin.exists():
+    if menubar_bin.exists() and not os.environ.get("GATEWAY_NO_MENUBAR"):
         # Kill any stale menubar processes from previous runs
         try:
             result = subprocess.run(

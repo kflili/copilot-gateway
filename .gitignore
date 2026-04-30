@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .gateway-token.json
 menubar
+CopilotGateway.app/
