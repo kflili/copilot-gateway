@@ -516,6 +516,19 @@ def _extract_usage_from_event(event: dict, path: str) -> tuple:
 class GatewayHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
+    # Headers we either emit ourselves or that would create client-visible
+    # duplicates if forwarded from upstream. Browsers reject multi-valued
+    # Access-Control-Allow-* per CORS spec; date/server are emitted by
+    # send_response; transfer-encoding is irrelevant (urllib de-chunks);
+    # connection/keep-alive/content-length are managed per-response below.
+    _SKIP_FORWARDED_HEADERS = frozenset({
+        "transfer-encoding", "connection", "keep-alive", "content-length",
+        "date", "server",
+        "access-control-allow-origin",
+        "access-control-allow-headers",
+        "access-control-allow-methods",
+    })
+
     def log_message(self, fmt, *args):
         pass  # we do our own logging
 
@@ -849,77 +862,65 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         # send a proper Content-Length so HTTP/1.1 clients don't have to
         # wait for the socket to close. For streaming responses we send
         # Connection: close so the close itself terminates the stream.
-        # Also skip headers we either emit ourselves (date/server via
-        # send_response, CORS via _cors_headers) or would dup if upstream
-        # echoes them — browsers reject multi-valued Access-Control-Allow-*.
-        skip_headers = {"transfer-encoding", "connection", "keep-alive",
-                        "content-length", "date", "server",
-                        "access-control-allow-origin",
-                        "access-control-allow-headers",
-                        "access-control-allow-methods"}
+        # Shared header-forwarding lives in _emit_forwarded_response_headers;
+        # the per-path post-amble (Connection: close vs Content-Length) stays
+        # inline so the divergence is visible at the call site.
 
-        if is_stream:
-            self.send_response(resp.status)
-            self._cors_headers()
-            for k, v in resp.headers.items():
-                if k.lower() not in skip_headers:
-                    self.send_header(k, v)
-            self.send_header("Connection", "close")
-            self.close_connection = True
-            self.end_headers()
+        with resp:
+            if is_stream:
+                self._emit_forwarded_response_headers(resp)
+                self.send_header("Connection", "close")
+                self.close_connection = True
+                self.end_headers()
 
-            total = 0
-            input_tokens = 0
-            output_tokens = 0
-            nano_aiu = 0
-            line_buf = b""
-            while True:
-                chunk = resp.read(4096)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                self.wfile.flush()
-                total += len(chunk)
+                total = 0
+                input_tokens = 0
+                output_tokens = 0
+                nano_aiu = 0
+                line_buf = b""
+                while True:
+                    chunk = resp.read(4096)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    total += len(chunk)
 
-                # Incremental SSE line scanning for usage data
-                line_buf += chunk
-                while b"\n" in line_buf:
-                    line, line_buf = line_buf.split(b"\n", 1)
-                    line_str = line.decode("utf-8", errors="replace").strip()
-                    if line_str.startswith("data: ") and "usage" in line_str:
-                        try:
-                            event = json.loads(line_str[6:])
-                            it, ot, na = _extract_usage_from_event(event, path)
-                            input_tokens += it
-                            output_tokens += ot
-                            nano_aiu = max(nano_aiu, na)
-                        except (json.JSONDecodeError, ValueError):
-                            pass
+                    # Incremental SSE line scanning for usage data
+                    line_buf += chunk
+                    while b"\n" in line_buf:
+                        line, line_buf = line_buf.split(b"\n", 1)
+                        line_str = line.decode("utf-8", errors="replace").strip()
+                        if line_str.startswith("data: ") and "usage" in line_str:
+                            try:
+                                event = json.loads(line_str[6:])
+                                it, ot, na = _extract_usage_from_event(event, path)
+                                input_tokens += it
+                                output_tokens += ot
+                                nano_aiu = max(nano_aiu, na)
+                            except (json.JSONDecodeError, ValueError):
+                                pass
 
-            log(f"  ← {resp.status} streamed {total} bytes"
-                f" (in={input_tokens}, out={output_tokens})")
-            self._record_usage(model, input_tokens, output_tokens, nano_aiu)
-        else:
-            # Buffer the body so we can send an honest Content-Length.
-            data = resp.read()
-            self.send_response(resp.status)
-            self._cors_headers()
-            for k, v in resp.headers.items():
-                if k.lower() not in skip_headers:
-                    self.send_header(k, v)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            input_tokens, output_tokens, nano_aiu = 0, 0, 0
-            try:
-                resp_json = json.loads(data)
-                input_tokens, output_tokens, nano_aiu = _extract_usage_from_response(
-                    resp_json, path)
-            except (json.JSONDecodeError, ValueError):
-                pass
-            log(f"  ← {resp.status} ({len(data)} bytes)"
-                f" (in={input_tokens}, out={output_tokens})")
-            self._record_usage(model, input_tokens, output_tokens, nano_aiu)
+                log(f"  ← {resp.status} streamed {total} bytes"
+                    f" (in={input_tokens}, out={output_tokens})")
+                self._record_usage(model, input_tokens, output_tokens, nano_aiu)
+            else:
+                # Buffer the body so we can send an honest Content-Length.
+                data = resp.read()
+                self._emit_forwarded_response_headers(resp)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                input_tokens, output_tokens, nano_aiu = 0, 0, 0
+                try:
+                    resp_json = json.loads(data)
+                    input_tokens, output_tokens, nano_aiu = _extract_usage_from_response(
+                        resp_json, path)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                log(f"  ← {resp.status} ({len(data)} bytes)"
+                    f" (in={input_tokens}, out={output_tokens})")
+                self._record_usage(model, input_tokens, output_tokens, nano_aiu)
 
     def _record_usage(self, model: str, input_tokens: int, output_tokens: int,
                       nano_aiu: int):
@@ -971,6 +972,17 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                          "Content-Type, Authorization, x-api-key, anthropic-version, openai-intent")
         self.send_header("Access-Control-Allow-Methods",
                          "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+
+    def _emit_forwarded_response_headers(self, resp):
+        """Emit the status, CORS, and upstream headers (minus _SKIP_FORWARDED_HEADERS).
+        Caller is responsible for any per-path post-amble (Connection/Content-Length)
+        and end_headers().
+        """
+        self.send_response(resp.status)
+        self._cors_headers()
+        for k, v in resp.headers.items():
+            if k.lower() not in self._SKIP_FORWARDED_HEADERS:
+                self.send_header(k, v)
 
     def _send_cors_preflight(self):
         self.send_response(200)

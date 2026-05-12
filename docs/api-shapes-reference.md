@@ -118,11 +118,12 @@ Both OpenAI's `/responses` and Anthropic's `/v1/messages` define server-side
 The gateway forwards request bodies with minimal normalization (strips
 `context_management`, `cache_control.scope`, and unsupported tool types;
 rewrites a small allowlist of Claude Opus 4.x base model IDs to their
-upstream-required variants — `claude-opus-4.7` / `-4-7` → `-1m-internal`,
-`claude-opus-4.6` / `-4-6` → `-1m`; converts `thinking.type:enabled→adaptive`
-for Opus 4.7 — see `gateway.py` for the full list), so server-tool support
-is gated entirely by what GitHub Copilot's enterprise upstream chooses to
-honor — which is **asymmetric**.
+upstream-required variants — `claude-opus-4.7` / `claude-opus-4-7` →
+`claude-opus-4.7-1m-internal`, and `claude-opus-4.6` / `claude-opus-4-6` →
+`claude-opus-4.6-1m`; converts `thinking.type:enabled→adaptive` for Opus 4.7
+— see `gateway.py` for the full list), so server-tool support is gated
+entirely by what GitHub Copilot's enterprise upstream chooses to honor —
+which is **asymmetric**.
 
 | Tool                                  | Where it lives                | Through Copilot? |
 |---------------------------------------|-------------------------------|:----------------:|
