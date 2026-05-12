@@ -133,7 +133,7 @@ The CLI has a hardcoded allowlist of 18 models that it shows in the model picker
 
 - **Chat Completions** (`/chat/completions`) — Default for most models
 - **Responses API** (`/v1/responses`) — For GPT-5.x series when `supported_endpoints` includes `/responses`
-- **WebSocket Responses** (`ws:/responses`) — Feature-flagged for GPT-5.x. The Codex CLI attempts this first via `GET /v1/responses` with `Upgrade: websocket`. The gateway does not proxy WebSocket; it returns `HTTP/1.1 405 Method Not Allowed` (`Allow: POST`, empty body), which causes the CLI to fall back to HTTPS POST immediately. See `gateway.py:534`.
+- **WebSocket Responses** (`ws:/responses`) — Feature-flagged for GPT-5.x. The Codex CLI attempts this first via `GET /v1/responses` with `Upgrade: websocket`. The gateway does not proxy WebSocket; it returns `HTTP/1.1 405 Method Not Allowed` (`Allow: POST`, empty body), which causes the CLI to fall back to HTTPS POST immediately. See the `do_GET` handler for `/v1/responses` in `gateway.py`.
 - **Anthropic Messages** (`/v1/messages`) — For Claude models when using native format
 
 ### Model Config Inheritance

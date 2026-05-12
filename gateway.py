@@ -539,6 +539,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Allow", "POST")
             self.send_header("Connection", "close")
             self.send_header("Content-Length", "0")
+            self.close_connection = True
             self.end_headers()
         else:
             self._forward()
@@ -679,6 +680,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 except Exception as e:
                     err = json.dumps({"error": f"Failed to decompress zstd body: {e}"}).encode()
                     self.send_response(400)
+                    self._cors_headers()
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
@@ -691,6 +693,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 except Exception as e:
                     err = json.dumps({"error": f"Failed to decompress gzip body: {e}"}).encode()
                     self.send_response(400)
+                    self._cors_headers()
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
@@ -960,6 +963,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self._cors_headers()
         self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
 

@@ -217,7 +217,7 @@ Or use the `cgcx` alias (above). Picks up the model from `~/.codex/config.toml` 
 ⚠ Falling back from WebSockets to HTTPS transport. unexpected status 405 Method Not Allowed
 ```
 
-This is one-time per `cgcx` invocation (~5s). Every subsequent prompt in the same session goes directly over HTTPS POST with no overhead. The 405 response is intentional — `gateway.py:534` rejects the WebSocket upgrade cleanly so the CLI falls back immediately instead of running its full retry loop (which would take 1-2 min).
+The 405 response itself completes in <1 s. The user-observable delay on the first `cgcx` prompt is ~5 s end-to-end, since the CLI also does its WebSocket-handshake setup and HTTPS-transport reconnect on top of the round-trip. Every subsequent prompt in the same session goes directly over HTTPS POST with no overhead. The 405 response is intentional — the `do_GET` handler for `/v1/responses` in `gateway.py` rejects the WebSocket upgrade cleanly so the CLI falls back immediately instead of running its full retry loop (which would take 1-2 min).
 
 ### AionUi (Auto-detection)
 
