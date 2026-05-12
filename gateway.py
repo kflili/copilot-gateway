@@ -685,6 +685,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
                     self.wfile.write(err)
+                    if request_stats:
+                        request_stats.record_failure()
                     return
             elif encoding == "gzip":
                 try:
@@ -698,6 +700,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
                     self.wfile.write(err)
+                    if request_stats:
+                        request_stats.record_failure()
                     return
 
         # Parse request body for stream flag and model name
