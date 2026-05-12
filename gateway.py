@@ -52,7 +52,7 @@ except ImportError:
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-GATEWAY_VERSION = "1.2.0"  # Strip unsupported tools, handle WebSocket GET
+GATEWAY_VERSION = "1.3.0"  # Codex CLI 405 fallback, HTTP/1.1 correctness fixes, header dedup
 LISTEN_HOST = os.environ.get("GATEWAY_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("GATEWAY_PORT", "8787"))
 UPSTREAM = os.environ.get("GATEWAY_UPSTREAM", "https://api.githubcopilot.com")
@@ -514,6 +514,20 @@ def _extract_usage_from_event(event: dict, path: str) -> tuple:
 # ─── Gateway Handler ──────────────────────────────────────────────────────────
 
 class GatewayHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    # Headers we either emit ourselves or that would create client-visible
+    # duplicates if forwarded from upstream. Browsers reject multi-valued
+    # Access-Control-Allow-* per CORS spec; date/server are emitted by
+    # send_response; transfer-encoding is irrelevant (urllib de-chunks);
+    # connection/keep-alive/content-length are managed per-response below.
+    _SKIP_FORWARDED_HEADERS = frozenset({
+        "transfer-encoding", "connection", "keep-alive", "content-length",
+        "date", "server",
+        "access-control-allow-origin",
+        "access-control-allow-headers",
+        "access-control-allow-methods",
+    })
 
     def log_message(self, fmt, *args):
         pass  # we do our own logging
@@ -531,12 +545,15 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/logs":
             self._handle_logs()
         elif path in ("/v1/responses", "/responses"):
-            # Codex CLI sends GET for WebSocket upgrade — we don't support it
-            self.send_response(400)
-            self._cors_headers()
-            self.send_header("Content-Type", "application/json")
+            # Codex CLI sends GET with Upgrade: websocket — reject cleanly
+            # with 405 + Allow: POST so the CLI falls back immediately
+            # (no retries, no body to display in the UI).
+            self.send_response(405)
+            self.send_header("Allow", "POST, OPTIONS")
+            self.send_header("Connection", "close")
+            self.send_header("Content-Length", "0")
+            self.close_connection = True
             self.end_headers()
-            self.wfile.write(b'{"error":"WebSocket not supported, use POST"}')
         else:
             self._forward()
 
@@ -674,20 +691,30 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     body = _zstd_decompress(body)
                     log("  decompressed zstd request body")
                 except Exception as e:
+                    err = json.dumps({"error": f"Failed to decompress zstd body: {e}"}).encode()
                     self.send_response(400)
+                    self._cors_headers()
                     self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
-                    self.wfile.write(json.dumps({"error": f"Failed to decompress zstd body: {e}"}).encode())
+                    self.wfile.write(err)
+                    if request_stats:
+                        request_stats.record_failure()
                     return
             elif encoding == "gzip":
                 try:
                     body = gzip.decompress(body)
                     log("  decompressed gzip request body")
                 except Exception as e:
+                    err = json.dumps({"error": f"Failed to decompress gzip body: {e}"}).encode()
                     self.send_response(400)
+                    self._cors_headers()
                     self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
-                    self.wfile.write(json.dumps({"error": f"Failed to decompress gzip body: {e}"}).encode())
+                    self.wfile.write(err)
+                    if request_stats:
+                        request_stats.record_failure()
                     return
 
         # Parse request body for stream flag and model name
@@ -749,6 +776,24 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     req_json["model"] = "claude-opus-4.6-1m"
                     model = req_json["model"]
                     stripped.append("model→4.6-1m")
+                # Rewrite Anthropic-style `thinking.type=enabled` → `adaptive`
+                # for Claude Opus 4.7 specifically.  Copilot's upstream
+                # rejects "enabled" on this model with:
+                #   "thinking.type.enabled" is not supported for this model.
+                #   Use "thinking.type.adaptive" and "output_config.effort"
+                # `adaptive` lets the model decide when to think and uses
+                # `output_config.effort` (already forwarded) as the control.
+                # `budget_tokens` is irrelevant in adaptive mode, so drop it.
+                # 4.6 family still accepts `enabled`, so leave it alone.
+                # Narrow by design — only broaden after empirically
+                # confirming another model in the family hits the same
+                # rejection.
+                if model.startswith("claude-opus-4.7") or model.startswith("claude-opus-4-7"):
+                    thinking = req_json.get("thinking")
+                    if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+                        thinking["type"] = "adaptive"
+                        thinking.pop("budget_tokens", None)
+                        stripped.append("thinking.type:enabled→adaptive")
                 # Strip tools not supported by the Copilot API
                 tools = req_json.get("tools")
                 if isinstance(tools, list):
@@ -798,69 +843,84 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
                     pass
             # Error response
+            body_out = error_body or b'{"error":"upstream unavailable"}'
             self.send_response(error_code or 502)
             self._cors_headers()
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body_out)))
             self.end_headers()
-            self.wfile.write(error_body or b'{"error":"upstream unavailable"}')
-            log(f"  ← {error_code or 502} error: {(error_body or b'')[:500]}")
+            self.wfile.write(body_out)
+            log(f"  ← {error_code or 502} error: {body_out[:500]}")
             if request_stats:
                 request_stats.record_failure()
             return
 
-        # Forward success response
-        self.send_response(resp.status)
-        self._cors_headers()
-        for k, v in resp.headers.items():
-            if k.lower() not in ("transfer-encoding", "connection", "keep-alive"):
-                self.send_header(k, v)
-        self.end_headers()
+        # Forward success response.
+        # NOTE: upstream typically returns the body chunk-encoded with no
+        # Content-Length. We strip Transfer-Encoding (urllib already de-chunks
+        # for us). For non-streaming responses we read the body first and
+        # send a proper Content-Length so HTTP/1.1 clients don't have to
+        # wait for the socket to close. For streaming responses we send
+        # Connection: close so the close itself terminates the stream.
+        # Shared header-forwarding lives in _emit_forwarded_response_headers;
+        # the per-path post-amble (Connection: close vs Content-Length) stays
+        # inline so the divergence is visible at the call site.
 
-        if is_stream:
-            total = 0
-            input_tokens = 0
-            output_tokens = 0
-            nano_aiu = 0
-            line_buf = b""
-            while True:
-                chunk = resp.read(4096)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                self.wfile.flush()
-                total += len(chunk)
+        with resp:
+            if is_stream:
+                self._emit_forwarded_response_headers(resp)
+                self.send_header("Connection", "close")
+                self.close_connection = True
+                self.end_headers()
 
-                # Incremental SSE line scanning for usage data
-                line_buf += chunk
-                while b"\n" in line_buf:
-                    line, line_buf = line_buf.split(b"\n", 1)
-                    line_str = line.decode("utf-8", errors="replace").strip()
-                    if line_str.startswith("data: ") and "usage" in line_str:
-                        try:
-                            event = json.loads(line_str[6:])
-                            it, ot, na = _extract_usage_from_event(event, path)
-                            input_tokens += it
-                            output_tokens += ot
-                            nano_aiu = max(nano_aiu, na)
-                        except (json.JSONDecodeError, ValueError):
-                            pass
+                total = 0
+                input_tokens = 0
+                output_tokens = 0
+                nano_aiu = 0
+                line_buf = b""
+                while True:
+                    chunk = resp.read(4096)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    total += len(chunk)
 
-            log(f"  ← {resp.status} streamed {total} bytes"
-                f" (in={input_tokens}, out={output_tokens})")
-            self._record_usage(model, input_tokens, output_tokens, nano_aiu)
-        else:
-            data = resp.read()
-            self.wfile.write(data)
-            input_tokens, output_tokens, nano_aiu = 0, 0, 0
-            try:
-                resp_json = json.loads(data)
-                input_tokens, output_tokens, nano_aiu = _extract_usage_from_response(
-                    resp_json, path)
-            except (json.JSONDecodeError, ValueError):
-                pass
-            log(f"  ← {resp.status} ({len(data)} bytes)"
-                f" (in={input_tokens}, out={output_tokens})")
-            self._record_usage(model, input_tokens, output_tokens, nano_aiu)
+                    # Incremental SSE line scanning for usage data
+                    line_buf += chunk
+                    while b"\n" in line_buf:
+                        line, line_buf = line_buf.split(b"\n", 1)
+                        line_str = line.decode("utf-8", errors="replace").strip()
+                        if line_str.startswith("data: ") and "usage" in line_str:
+                            try:
+                                event = json.loads(line_str[6:])
+                                it, ot, na = _extract_usage_from_event(event, path)
+                                input_tokens += it
+                                output_tokens += ot
+                                nano_aiu = max(nano_aiu, na)
+                            except (json.JSONDecodeError, ValueError):
+                                pass
+
+                log(f"  ← {resp.status} streamed {total} bytes"
+                    f" (in={input_tokens}, out={output_tokens})")
+                self._record_usage(model, input_tokens, output_tokens, nano_aiu)
+            else:
+                # Buffer the body so we can send an honest Content-Length.
+                data = resp.read()
+                self._emit_forwarded_response_headers(resp)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                input_tokens, output_tokens, nano_aiu = 0, 0, 0
+                try:
+                    resp_json = json.loads(data)
+                    input_tokens, output_tokens, nano_aiu = _extract_usage_from_response(
+                        resp_json, path)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                log(f"  ← {resp.status} ({len(data)} bytes)"
+                    f" (in={input_tokens}, out={output_tokens})")
+                self._record_usage(model, input_tokens, output_tokens, nano_aiu)
 
     def _record_usage(self, model: str, input_tokens: int, output_tokens: int,
                       nano_aiu: int):
@@ -913,10 +973,22 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods",
                          "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 
+    def _emit_forwarded_response_headers(self, resp):
+        """Emit the status, CORS, and upstream headers (minus _SKIP_FORWARDED_HEADERS).
+        Caller is responsible for any per-path post-amble (Connection/Content-Length)
+        and end_headers().
+        """
+        self.send_response(resp.status)
+        self._cors_headers()
+        for k, v in resp.headers.items():
+            if k.lower() not in self._SKIP_FORWARDED_HEADERS:
+                self.send_header(k, v)
+
     def _send_cors_preflight(self):
         self.send_response(200)
         self._cors_headers()
         self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
 

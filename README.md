@@ -56,6 +56,7 @@ python3 gateway.py --mode vscode
 cg        # Start gateway + demo + menu bar (backgrounds, returns prompt)
 cgcc      # Claude Code through gateway (skip permissions, like cc)
 cgca      # Claude Code through gateway (auto mode, safer than skip-all)
+cgcx      # Codex CLI through gateway (workspace-write, on-request approvals)
 
 # Or without aliases:
 python3 gateway.py    # starts gateway + demo UI + ⚡️CG menu bar
@@ -88,6 +89,7 @@ cg() {
 }
 alias cgcc="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --dangerously-skip-permissions"
 alias cgca="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --enable-auto-mode"
+alias cgcx="OPENAI_API_KEY=dummy codex -c openai_base_url=http://localhost:8787/v1 -a on-request -s workspace-write -c approvals_reviewer=\"auto_review\""
 
 # Claude Code (direct Anthropic API)
 alias cc="claude --dangerously-skip-permissions"
@@ -99,6 +101,7 @@ alias ca="claude --enable-auto-mode"
 | `cg` | Start gateway in background (+ demo UI on :8788, + ⚡️CG menu bar) with per-session logs |
 | `cgcc` | Claude Code through gateway, skip all permissions |
 | `cgca` | Claude Code through gateway, auto mode (safer, when available) |
+| `cgcx` | Codex CLI through gateway (gpt-5.5/5.4 etc., workspace-write sandbox) |
 | `cc` | Claude Code direct, skip all permissions |
 | `ca` | Claude Code direct, auto mode |
 
@@ -199,6 +202,22 @@ Or in `~/.claude/settings.json`:
   }
 }
 ```
+
+### Codex CLI (OpenAI)
+
+```bash
+OPENAI_API_KEY=dummy codex -c openai_base_url=http://localhost:8787/v1
+```
+
+Or use the `cgcx` alias (above). Picks up the model from `~/.codex/config.toml` — set `model = "gpt-5.5"` (or any model the gateway lists at `/v1/models`).
+
+**Expected behavior on first prompt:** the Codex CLI tries a WebSocket transport against `/v1/responses` first, the gateway returns `405 Method Not Allowed` (it doesn't proxy WebSocket), and the CLI prints:
+
+```
+⚠ Falling back from WebSockets to HTTPS transport. unexpected status 405 Method Not Allowed
+```
+
+The 405 response itself completes in <1 s. The user-observable delay on the first `cgcx` prompt is ~5 s end-to-end, since the CLI also does its WebSocket-handshake setup and HTTPS-transport reconnect on top of the round-trip. Every subsequent prompt in the same session goes directly over HTTPS POST with no overhead. The 405 response is intentional — the `do_GET` handler for `/v1/responses` in `gateway.py` rejects the WebSocket upgrade cleanly so the CLI falls back immediately instead of running its full retry loop (which would take 1-2 min).
 
 ### AionUi (Auto-detection)
 
@@ -343,6 +362,7 @@ The demo calls the Copilot API directly (not through the gateway) so it can swit
 | `docs/copilot-cli-internals.md` | Full reverse-engineering of the Copilot CLI |
 | `docs/building-lightweight-cli.md` | Guide to building your own CLI |
 | `docs/claude-code-integration.md` | Using the gateway with Claude Code CLI (backup/setup/restore) |
+| `docs/api-shapes-reference.md` | Endpoint × model × built-in-tool capability matrix |
 
 ## How Auth Works
 
@@ -360,3 +380,5 @@ The demo calls the Copilot API directly (not through the gateway) so it can swit
 - The Copilot CLI has a hardcoded model allowlist that hides some API-available models (goldeneye, minimax-m2.5)
 - Rate limits are per your Copilot plan (enterprise = unlimited for this user)
 - Gemini 3 Pro was deprecated March 26, 2026; replaced by Gemini 3.1 Pro (VS Code mode only)
+- **Server-side tool asymmetry**: Copilot honors OpenAI's `web_search` server tool on `/v1/responses` for GPT-5.x but rejects Anthropic's `web_search_20250305` on `/v1/messages` for Claude. See `docs/api-shapes-reference.md` § *Built-in server tools*. Workaround for Claude Code: invoke the `gpt` skill (copilot CLI) for ad-hoc web research instead of relying on Anthropic's `WebSearch`.
+- **Codex CLI WebSocket fallback**: First prompt of each `cgcx` session shows a one-time `Falling back from WebSockets to HTTPS transport` message and ~5s delay. The Codex CLI tries WebSocket transport at `/v1/responses` first; the gateway returns `405 Method Not Allowed` to force immediate fallback. Subsequent prompts in the same session are direct HTTPS POST with no overhead.
