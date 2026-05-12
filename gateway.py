@@ -52,7 +52,7 @@ except ImportError:
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-GATEWAY_VERSION = "1.2.0"  # Strip unsupported tools, handle WebSocket GET
+GATEWAY_VERSION = "1.3.0"  # Codex CLI 405 fallback, HTTP/1.1 correctness fixes, header dedup
 LISTEN_HOST = os.environ.get("GATEWAY_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("GATEWAY_PORT", "8787"))
 UPSTREAM = os.environ.get("GATEWAY_UPSTREAM", "https://api.githubcopilot.com")
