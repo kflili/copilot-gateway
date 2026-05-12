@@ -842,8 +842,14 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         # send a proper Content-Length so HTTP/1.1 clients don't have to
         # wait for the socket to close. For streaming responses we send
         # Connection: close so the close itself terminates the stream.
+        # Also skip headers we either emit ourselves (date/server via
+        # send_response, CORS via _cors_headers) or would dup if upstream
+        # echoes them — browsers reject multi-valued Access-Control-Allow-*.
         skip_headers = {"transfer-encoding", "connection", "keep-alive",
-                        "content-length"}
+                        "content-length", "date", "server",
+                        "access-control-allow-origin",
+                        "access-control-allow-headers",
+                        "access-control-allow-methods"}
 
         if is_stream:
             self.send_response(resp.status)
