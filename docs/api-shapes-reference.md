@@ -115,8 +115,12 @@ Re-verify any rejection with the 400 message — upstream is the source of truth
 
 Both OpenAI's `/responses` and Anthropic's `/v1/messages` define server-side
 "built-in" tools that the model service runs itself (no client-side execution).
-The gateway forwards request bodies as-is, so support is gated entirely by what
-GitHub Copilot's enterprise upstream chooses to honor — which is **asymmetric**.
+The gateway forwards request bodies with minimal normalization (strips
+`context_management`, `cache_control.scope`, and unsupported tool types;
+rewrites Claude 4.x model IDs to their `-1m-internal` variants; converts
+`thinking.type:enabled→adaptive` for Opus 4.7 — see `gateway.py` for the full
+list), so server-tool support is gated entirely by what GitHub Copilot's
+enterprise upstream chooses to honor — which is **asymmetric**.
 
 | Tool                                  | Where it lives                | Through Copilot? |
 |---------------------------------------|-------------------------------|:----------------:|

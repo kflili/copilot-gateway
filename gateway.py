@@ -536,7 +536,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             # with 405 + Allow: POST so the CLI falls back immediately
             # (no retries, no body to display in the UI).
             self.send_response(405)
-            self.send_header("Allow", "POST")
+            self.send_header("Allow", "POST, OPTIONS")
             self.send_header("Connection", "close")
             self.send_header("Content-Length", "0")
             self.close_connection = True
