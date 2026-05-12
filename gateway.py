@@ -760,14 +760,17 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     model = req_json["model"]
                     stripped.append("model→4.6-1m")
                 # Rewrite Anthropic-style `thinking.type=enabled` → `adaptive`
-                # for the 4.7 family.  Copilot's upstream rejects "enabled"
-                # for these models with:
+                # for Claude Opus 4.7 specifically.  Copilot's upstream
+                # rejects "enabled" on this model with:
                 #   "thinking.type.enabled" is not supported for this model.
                 #   Use "thinking.type.adaptive" and "output_config.effort"
                 # `adaptive` lets the model decide when to think and uses
                 # `output_config.effort` (already forwarded) as the control.
                 # `budget_tokens` is irrelevant in adaptive mode, so drop it.
                 # 4.6 family still accepts `enabled`, so leave it alone.
+                # Narrow by design — only broaden after empirically
+                # confirming another model in the family hits the same
+                # rejection.
                 if model.startswith("claude-opus-4.7") or model.startswith("claude-opus-4-7"):
                     thinking = req_json.get("thinking")
                     if isinstance(thinking, dict) and thinking.get("type") == "enabled":
