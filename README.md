@@ -89,7 +89,7 @@ cg() {
 }
 alias cgcc="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --dangerously-skip-permissions"
 alias cgca="ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 claude --enable-auto-mode"
-alias cgcx="OPENAI_API_KEY=dummy codex -c openai_base_url=http://localhost:8787/v1 -a on-request -s workspace-write -c approvals.reviewer=\"auto_review\""
+alias cgcx="OPENAI_API_KEY=dummy codex -c openai_base_url=http://localhost:8787/v1 -a on-request -s workspace-write -c approvals_reviewer=\"auto_review\""
 
 # Claude Code (direct Anthropic API)
 alias cc="claude --dangerously-skip-permissions"
