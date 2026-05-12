@@ -111,6 +111,31 @@ Re-verify any rejection with the 400 message — upstream is the source of truth
 
 ---
 
+## Built-in server tools (web_search, file_search, etc.)
+
+Both OpenAI's `/responses` and Anthropic's `/v1/messages` define server-side
+"built-in" tools that the model service runs itself (no client-side execution).
+The gateway forwards request bodies as-is, so support is gated entirely by what
+GitHub Copilot's enterprise upstream chooses to honor — which is **asymmetric**.
+
+| Tool                                  | Where it lives                | Through Copilot? |
+|---------------------------------------|-------------------------------|:----------------:|
+| OpenAI `web_search` (Responses tool)  | `tools:[{type:"web_search"}]` on `/v1/responses` for GPT-5.x | ✅ honored |
+| Anthropic `web_search_20250305`        | `tools:[{type:"web_search_20250305", name:"web_search"}]` on `/v1/messages` for Claude | ❌ 400 — `"The use of the web search tool is not supported."` |
+| OpenAI `file_search`, `computer_use`, `image_generation` | `/v1/responses` | not yet probed end-to-end |
+
+Verified empirically against `https://api.enterprise.githubcopilot.com` using
+this gateway. Successful GPT-5.4 + `web_search` calls return `web_search_call`
+output items with `action.queries[]` plus a `message` containing
+`url_citation` annotations — i.e. the exact OpenAI Responses-API shape.
+
+**Implication for Claude Code via the gateway:** Claude can't reach Copilot's
+search directly. The practical workaround is to invoke the `gpt` skill
+(`copilot` CLI) for ad-hoc web research; see
+`docs/claude-code-integration.md` § *Web Search*.
+
+---
+
 ## Decision guide for picking an endpoint
 
 1. **Anthropic / Claude model?** → `POST /v1/messages` (use Anthropic shape;

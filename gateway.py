@@ -514,6 +514,7 @@ def _extract_usage_from_event(event: dict, path: str) -> tuple:
 # ─── Gateway Handler ──────────────────────────────────────────────────────────
 
 class GatewayHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
         pass  # we do our own logging
@@ -531,12 +532,14 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/logs":
             self._handle_logs()
         elif path in ("/v1/responses", "/responses"):
-            # Codex CLI sends GET for WebSocket upgrade — we don't support it
-            self.send_response(400)
-            self._cors_headers()
-            self.send_header("Content-Type", "application/json")
+            # Codex CLI sends GET with Upgrade: websocket — reject cleanly
+            # with 405 + Allow: POST so the CLI falls back immediately
+            # (no retries, no body to display in the UI).
+            self.send_response(405)
+            self.send_header("Allow", "POST")
+            self.send_header("Connection", "close")
+            self.send_header("Content-Length", "0")
             self.end_headers()
-            self.wfile.write(b'{"error":"WebSocket not supported, use POST"}')
         else:
             self._forward()
 
@@ -674,20 +677,24 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     body = _zstd_decompress(body)
                     log("  decompressed zstd request body")
                 except Exception as e:
+                    err = json.dumps({"error": f"Failed to decompress zstd body: {e}"}).encode()
                     self.send_response(400)
                     self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
-                    self.wfile.write(json.dumps({"error": f"Failed to decompress zstd body: {e}"}).encode())
+                    self.wfile.write(err)
                     return
             elif encoding == "gzip":
                 try:
                     body = gzip.decompress(body)
                     log("  decompressed gzip request body")
                 except Exception as e:
+                    err = json.dumps({"error": f"Failed to decompress gzip body: {e}"}).encode()
                     self.send_response(400)
                     self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
-                    self.wfile.write(json.dumps({"error": f"Failed to decompress gzip body: {e}"}).encode())
+                    self.wfile.write(err)
                     return
 
         # Parse request body for stream flag and model name
@@ -749,6 +756,21 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     req_json["model"] = "claude-opus-4.6-1m"
                     model = req_json["model"]
                     stripped.append("model→4.6-1m")
+                # Rewrite Anthropic-style `thinking.type=enabled` → `adaptive`
+                # for the 4.7 family.  Copilot's upstream rejects "enabled"
+                # for these models with:
+                #   "thinking.type.enabled" is not supported for this model.
+                #   Use "thinking.type.adaptive" and "output_config.effort"
+                # `adaptive` lets the model decide when to think and uses
+                # `output_config.effort` (already forwarded) as the control.
+                # `budget_tokens` is irrelevant in adaptive mode, so drop it.
+                # 4.6 family still accepts `enabled`, so leave it alone.
+                if model.startswith("claude-opus-4.7") or model.startswith("claude-opus-4-7"):
+                    thinking = req_json.get("thinking")
+                    if isinstance(thinking, dict) and thinking.get("type") == "enabled":
+                        thinking["type"] = "adaptive"
+                        thinking.pop("budget_tokens", None)
+                        stripped.append("thinking.type:enabled→adaptive")
                 # Strip tools not supported by the Copilot API
                 tools = req_json.get("tools")
                 if isinstance(tools, list):
@@ -798,25 +820,38 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
                     pass
             # Error response
+            body_out = error_body or b'{"error":"upstream unavailable"}'
             self.send_response(error_code or 502)
             self._cors_headers()
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body_out)))
             self.end_headers()
-            self.wfile.write(error_body or b'{"error":"upstream unavailable"}')
-            log(f"  ← {error_code or 502} error: {(error_body or b'')[:500]}")
+            self.wfile.write(body_out)
+            log(f"  ← {error_code or 502} error: {body_out[:500]}")
             if request_stats:
                 request_stats.record_failure()
             return
 
-        # Forward success response
-        self.send_response(resp.status)
-        self._cors_headers()
-        for k, v in resp.headers.items():
-            if k.lower() not in ("transfer-encoding", "connection", "keep-alive"):
-                self.send_header(k, v)
-        self.end_headers()
+        # Forward success response.
+        # NOTE: upstream typically returns the body chunk-encoded with no
+        # Content-Length. We strip Transfer-Encoding (urllib already de-chunks
+        # for us). For non-streaming responses we read the body first and
+        # send a proper Content-Length so HTTP/1.1 clients don't have to
+        # wait for the socket to close. For streaming responses we send
+        # Connection: close so the close itself terminates the stream.
+        skip_headers = {"transfer-encoding", "connection", "keep-alive",
+                        "content-length"}
 
         if is_stream:
+            self.send_response(resp.status)
+            self._cors_headers()
+            for k, v in resp.headers.items():
+                if k.lower() not in skip_headers:
+                    self.send_header(k, v)
+            self.send_header("Connection", "close")
+            self.close_connection = True
+            self.end_headers()
+
             total = 0
             input_tokens = 0
             output_tokens = 0
@@ -849,7 +884,15 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 f" (in={input_tokens}, out={output_tokens})")
             self._record_usage(model, input_tokens, output_tokens, nano_aiu)
         else:
+            # Buffer the body so we can send an honest Content-Length.
             data = resp.read()
+            self.send_response(resp.status)
+            self._cors_headers()
+            for k, v in resp.headers.items():
+                if k.lower() not in skip_headers:
+                    self.send_header(k, v)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
             self.wfile.write(data)
             input_tokens, output_tokens, nano_aiu = 0, 0, 0
             try:

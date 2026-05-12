@@ -153,7 +153,9 @@ Remove the env vars from settings:
 
 ### Do I need extra config for extended thinking?
 
-**No.** Claude Code manages thinking internally — it decides when to use extended thinking based on the model and task. The `thinking` parameters are sent in the request body, and the gateway passes them through. Confirmed working with Opus 4.6 and Sonnet 4.6.
+**No.** Claude Code manages thinking internally — it decides when to use extended thinking based on the model and task. The `thinking` parameters are sent in the request body, and the gateway forwards them. Confirmed working with Opus 4.6, Opus 4.7, and Sonnet 4.6.
+
+> **Note (Opus 4.7):** Copilot's upstream rejects `thinking.type=enabled` for the 4.7 family and requires `thinking.type=adaptive` paired with `output_config.effort`. The gateway transparently rewrites `enabled` → `adaptive` (and drops `budget_tokens`) for 4.7 requests, so Claude Code's standard Anthropic-style payload keeps working. 4.6 still accepts `enabled` and is left untouched.
 
 ### What about Haiku for summaries? Do I need per-model URL config?
 
@@ -189,14 +191,22 @@ ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 \
 - Chat, multi-turn conversation
 - Streaming responses
 - Tool use (read/write files, bash, grep, etc.)
-- Extended thinking (Opus 4.6, Sonnet 4.6 — budget 1K-32K tokens)
+- Extended thinking (Opus 4.6, Opus 4.7, Sonnet 4.6 — 4.7 uses adaptive thinking via `output_config.effort`)
 - All Claude models (Haiku, Sonnet, Opus, Opus-1M) through the same URL
 - Date-suffixed model names (`claude-sonnet-4-6-20250514`) accepted
+- **Web search via the `gpt` skill (Copilot CLI)** (see *Web Search* below)
 
 ### What might not work
 - **Token counting**: Claude Code's token budget calculations assume direct Anthropic API responses. The Copilot API returns slightly different `usage` fields (e.g., includes `copilot_usage`), which shouldn't cause issues but is worth noting.
 - **Rate limits**: You're bound by your Copilot plan's quota, not Anthropic's rate limits. Enterprise plans typically have unlimited requests.
 - **Anthropic-specific headers**: Some Anthropic beta features that require special headers (like `anthropic-beta`) may not be forwarded correctly through the Copilot proxy.
+- **Anthropic's native `web_search_20250305` server tool**: rejected by Copilot's API with `"The use of the web search tool is not supported."` See the Web Search section below for the recommended workaround.
+
+## Web Search
+
+Anthropic's `web_search_20250305` server-side tool is rejected by Copilot's enterprise API for Claude models. The practical workaround on this gateway is to invoke the `gpt` skill (`copilot` CLI) for ad-hoc web research instead of relying on Anthropic's `WebSearch`. The Copilot CLI has working agentic web access (chained search + page open + find-in-page) and returns sourced answers.
+
+A user-level rule (`~/.claude/rules/user-rules.md` § *Web Search Fallback*) tells Claude to escalate to the `gpt` skill once `WebSearch` returns zero results or `WebFetch` 403/404s on 2+ URLs.
 
 ## Recommended Approach
 
