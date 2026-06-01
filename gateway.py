@@ -1029,7 +1029,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
     def _cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers",
-                         "Content-Type, Authorization, x-api-key, anthropic-version, openai-intent")
+                         "Content-Type, Authorization, x-api-key, anthropic-version, openai-intent, x-gateway-origin")
         self.send_header("Access-Control-Allow-Methods",
                          "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 
