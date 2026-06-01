@@ -25,6 +25,8 @@ Usage:
   GITHUB_TOKEN=gho_xxx python3 gateway.py     # explicit token
 """
 
+from __future__ import annotations  # defer annotation evaluation so PEP 604 unions and lowercase generics work under the README's stated Python 3.8+ support window
+
 import gzip
 import http.server
 import ipaddress
