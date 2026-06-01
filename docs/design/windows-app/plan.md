@@ -129,12 +129,21 @@ NOT bundle this; this is its own small PR (`feat/gateway-origin-tagging`).
   - In `172.16.0.0/12` ⇒ `"wsl"` (use `ipaddress.ip_network("172.16.0.0/12")`
     from stdlib; covers the full WSL2 NAT range)
   - Anything else ⇒ `"other"`
+- **`172.16.0.0/12` false-positive risk**: RFC 1918 space is widely used by
+  corporate LANs, VPNs, and Docker networks. When the WSL toggle binds the
+  gateway to `0.0.0.0` (see Item 3 "Gateway bind address"), any LAN/VPN client
+  in `172.16.0.0/12` gets misclassified as `"wsl"`. Mitigation v1 (this PR):
+  classifier honors an explicit `X-Gateway-Origin` request header when present
+  — overrides IP-based classification. The WSL toggle writes
+  `ANTHROPIC_CUSTOM_HEADERS=X-Gateway-Origin: wsl` into the WSL-side env so
+  WSL clients self-identify. The IP-based fallback covers users who haven't
+  upgraded their WSL toggle yet. Both the header path and the mirrored-mode
+  caveat below converge on the same header — implement once.
 - **Mirrored-mode caveat**: WSL2 `networkingMode=mirrored` (WSL 2.0+) makes WSL
-  traffic appear from loopback, so the classifier above will tag mirrored-mode
-  WSL traffic as `"windows"`. This is a known limitation; users who run
-  mirrored mode see their WSL traffic in the Windows column. Listed under Risks
-  with the proposed remediation (an optional client-side header
-  `X-Gateway-Origin: wsl` written by the WSL toggle).
+  traffic appear from loopback, so the pure-IP classifier above tags
+  mirrored-mode WSL traffic as `"windows"`. The `X-Gateway-Origin` header
+  override (above) solves this case too — same mechanism. Without the header,
+  documented limitation: mirrored-mode WSL traffic shows in the Windows column.
 - Extend `RequestStats` snapshot: add `per_origin: {windows: {...}, wsl: {...},
   other: {...}}` with the same shape as the top-level counters (requests,
   input/output tokens, last_request_at).
@@ -197,34 +206,58 @@ know what they're listening on.
     (which inherits the freshly-set env) and pop a green toast on success / red
     on failure.
 - **Enable for WSL** — submenu listing distros from `wsl.exe -l -q`.
-  Selecting a distro:
-  - **Detect host-reachability mode** inside the chosen distro, in priority
-    order:
+  Selecting a distro writes a **shell-function wrapper** into the user's rc
+  file that resolves the Windows host IP dynamically at every shell start.
+  This avoids the static-IP-in-bashrc trap (WSL2 host IP changes per restart)
+  and the systemd-resolved + custom-DNS edge cases of static `/etc/resolv.conf`
+  parsing.
+  - **Host-IP resolution** (runs at every shell start via the wrapper function,
+    in priority order — first non-empty wins):
     1. If `/etc/wsl.conf` or the parent `.wslconfig` enables
-       `networkingMode=mirrored` (WSL 2.0+), the Windows host is reachable at
-       `localhost` / `127.0.0.1` — use that. No nameserver lookup needed.
-    2. Else if `host.docker.internal` resolves (user enabled
-       `hostForwarding=true`), use it.
-    3. Else read the first `nameserver` line from `/etc/resolv.conf` and use
-       that IP.
-    The toggle persists the resolved value rather than re-resolving each
-    session, so a corporate `resolv.conf` rewrite doesn't break things later.
-  - **Detect the user's default shell** (`getent passwd $USER | cut -d: -f7`)
-    and write the env exports to the matching rc file with an idempotent marker
-    comment:
+       `networkingMode=mirrored` (WSL 2.0+), use `127.0.0.1` and skip the rest.
+       Detection: `grep -q 'networkingMode\s*=\s*mirrored' /etc/wsl.conf
+       2>/dev/null` (cheap, no network).
+    2. `host.docker.internal` if it resolves (`getent hosts host.docker.internal`).
+    3. Default-route gateway via `ip route show default | awk '{print $3}'` —
+       robust against custom DNS, `systemd-resolved` (where `nameserver` is
+       `127.0.0.53`), and `resolv.conf` auto-generation being disabled.
+    4. Final fallback: first non-loopback `nameserver` line from
+       `/etc/resolv.conf` (legacy path).
+  - **Shell detection** (for choosing the rc-file to write):
+    1. Read `$SHELL` env var (set at login; usually accurate).
+    2. Fall back to direct read: `getent passwd "$(whoami)" 2>/dev/null ||
+       grep "^$(whoami):" /etc/passwd` — `grep` form survives Alpine and other
+       minimal distros that lack `getent`.
+    3. Final fallback: write to `~/.profile` and surface a warning toast.
+  - **Rc-file writes** (one wrapper function per shell, idempotent — match by
+    marker comment `# >>> copilot-gateway env >>>`):
     - `bash` → `~/.bashrc`
     - `zsh` → `~/.zshrc` (common on Oh My Zsh installs)
-    - `fish` → `~/.config/fish/config.fish` (using `set -gx` syntax, not
-      `export`)
-    - other → fall back to `~/.profile` and surface a warning toast
+    - `fish` → `~/.config/fish/config.fish` (uses `set -gx`; function syntax
+      adapted)
+    - other → `~/.profile`
+    The wrapper function exports `ANTHROPIC_BASE_URL=http://<resolved_ip>:8787`
+    plus `ANTHROPIC_AUTH_TOKEN=dummy` and (Item 2 mirror) sets
+    `ANTHROPIC_CUSTOM_HEADERS=X-Gateway-Origin: wsl` so the gateway classifies
+    correctly even under mirrored mode / RFC 1918 LAN ambiguity.
   - Always also update `~/.claude/settings.json` `env` block (shell-agnostic,
-    picked up by `claude` itself regardless of shell).
+    picked up by `claude` itself regardless of shell — useful for non-rc-file
+    invocations like the VS Code WSL extension).
   - `[Test]` button: `wsl.exe -d <distro> -- bash -lc 'claude --help'` (forces
-    a login shell so rc files load), same green/red toast.
+    a login shell so the wrapper function loads), same green/red toast.
 - **Stop & quit** — graceful gateway shutdown + tray exit.
 
 **State**: tray reads from `/stats` and `/logs`; does NOT maintain its own
 counters. Single source of truth is the gateway process.
+
+**Subprocess hygiene** (Windows-specific): when packaged with PyInstaller
+`--noconsole` / `-w`, every `subprocess.run` / `subprocess.Popen` call (`setx`,
+`wsl.exe`, `claude --help` probes, default-route `ip route show` inside WSL)
+will flash a black console window unless the call passes
+`creationflags=subprocess.CREATE_NO_WINDOW` (Python ≥3.7, Windows only). Wrap
+all subprocess invocations in a helper `_quiet_run(cmd, **kw)` that injects
+the flag on Windows and is a passthrough elsewhere. Applies uniformly across
+Enable for Windows, Enable for WSL, Test buttons, and tray startup.
 
 **Out of scope for this item**: dashboard rendering (Item 4), packaging (Item 5).
 
@@ -292,6 +325,47 @@ user-facing artifact; document the slower cold-start as an acceptable trade-off.
 
 ## Risks
 
+- **Origin IP-classifier ambiguity** (RFC 1918 LAN, mirrored mode, unusual NAT
+  bridges) — `172.16.0.0/12` overlaps corporate LAN, VPN, and Docker subnets;
+  mirrored-mode WSL appears from loopback; some WSL configs use other NAT
+  bridges entirely. Mitigation v1 (this PR): origin classifier honors an
+  explicit `X-Gateway-Origin` request header when present, overriding
+  IP-based classification. The WSL toggle writes
+  `ANTHROPIC_CUSTOM_HEADERS=X-Gateway-Origin: wsl` into the WSL-side env so
+  WSL clients self-identify regardless of source IP. The IP-based fallback
+  remains for backward compat. The `other` bucket catches anything that
+  doesn't fit and surfaces it in the dashboard for user reporting.
+- **WSL host-IP resolution edge cases** — static resolution into `~/.bashrc`
+  is fragile: WSL2 host IP changes per restart; corporate VPN can rewrite
+  `/etc/resolv.conf`; `systemd-resolved` makes `nameserver` point at
+  `127.0.0.53`; custom DNS configurations bypass `resolv.conf` auto-gen
+  entirely. Mitigation: the WSL toggle writes a **shell function** (not a
+  static IP) into the rc file that resolves the host IP at every shell start
+  using a robust priority order (mirrored → `host.docker.internal` → default
+  route → `resolv.conf` legacy). The `[Test]` button surfaces resolution
+  failures immediately. See Item 3 for the full priority order.
+- **Shell-detection variance** (zsh / fish / Alpine) — Oh My Zsh users have
+  `~/.zshrc`, fish has its own config + syntax, Alpine WSL lacks `getent`.
+  Mitigation: Item 3's shell detection uses `$SHELL` first, falls back to
+  `getent passwd $USER` then `grep "^$USER:" /etc/passwd` for Alpine, and
+  ultimately writes `~/.profile` with a warning toast if none match. Always
+  also writes `~/.claude/settings.json` (shell-agnostic) as backup.
+- **`setx` does not affect already-running processes** — the master env is
+  updated in the registry but existing terminals / IDEs keep their inherited
+  env until restart. Mitigation: post-enable toast prompts the user to
+  restart terminals; the `[Test]` button always spawns a fresh shell so users
+  see immediate green/red feedback without restarting anything.
+- **`setx` PATH-length limits** (1024 chars on some Windows versions) —
+  mitigation: only write the two env vars we control; do not concatenate.
+- **PyInstaller `--noconsole` subprocess console-flash** — bare
+  `subprocess.run` calls flash a black console window in a windowed PyInstaller
+  build. Mitigation: Item 3's `_quiet_run` helper wraps every subprocess call
+  with `creationflags=subprocess.CREATE_NO_WINDOW` on Windows.
+- **PyInstaller cold-start** on first launch (a few seconds while the bundle
+  unpacks) — accepted; document in README.
+- **Backward-compat for existing `/stats` consumers** — Item 2 adds the
+  `per_origin` key without modifying any existing top-level fields; current
+  `demo.py` keeps working until Item 4 lands.
 - **`tkinter` rendering on Windows** can look dated — mitigation: if the
   Stats/Logs popups feel too clunky, fall back to `pywebview` (already on the
   fallback list).
@@ -301,39 +375,6 @@ user-facing artifact; document the slower cold-start as an acceptable trade-off.
   `tkinter.mainloop()` on the main thread, run `pystray.Icon.run_detached()`
   in a worker thread, and marshal all UI updates back via `root.after(0, fn)`.
   Documented as the canonical pattern in Item 3's Key Decisions.
-- **WSL2 `networkingMode=mirrored` misclassifies WSL traffic as `windows`** —
-  mirrored mode (WSL 2.0+) makes WSL connect from loopback, defeating IP-based
-  classification. Mitigation v1: documented limitation; users see WSL traffic
-  in the Windows column. Mitigation v2 (future): the WSL toggle writes an
-  optional `X-Gateway-Origin: wsl` request header into the WSL-side env
-  (`ANTHROPIC_CUSTOM_HEADERS`) and `gateway.py` honors it as an override when
-  present. Held off v1 to keep Item 2 small.
-- **WSL host-IP resolution edge cases** — users on locked-down corporate
-  networks may have `/etc/resolv.conf` overridden; mitigation: the `[Test]`
-  button surfaces the failure immediately, the toggle persists the
-  user-chosen IP rather than re-resolving each session, and the priority order
-  (mirrored → host.docker.internal → resolv.conf) gives the WSL toggle three
-  fallbacks before failing.
-- **WSL default-shell variance** — Oh My Zsh / fish users would have plain
-  `~/.bashrc` writes silently ignored. Mitigation: Item 3's "Enable for WSL"
-  flow detects `$SHELL` and writes to the matching rc file, plus always
-  updates `~/.claude/settings.json` (shell-agnostic) as a belt-and-braces
-  fallback.
-- **`setx` does not affect already-running processes** — the master env is
-  updated in the registry but existing terminals / IDEs keep their inherited
-  env until restart. Mitigation: post-enable toast prompts the user to
-  restart terminals; the `[Test]` button always spawns a fresh shell so users
-  see immediate green/red feedback without restarting anything.
-- **`setx` PATH-length limits** (1024 chars on some Windows versions) —
-  mitigation: only write the two env vars we control; do not concatenate.
-- **PyInstaller cold-start** on first launch (a few seconds while the bundle
-  unpacks) — accepted; document in README.
-- **Origin misclassification** when WSL traffic egresses through an unusual
-  bridge IP — mitigation: the `other` bucket catches it; users see traffic
-  appear under `other` and can file an issue with their IP.
-- **Backward-compat for existing `/stats` consumers** — Item 2 adds the
-  `per_origin` key without modifying any existing top-level fields; current
-  `demo.py` keeps working until Item 4 lands.
 
 ## Out of Scope (intentional)
 
