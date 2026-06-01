@@ -392,6 +392,11 @@ def _classify_origin(client_ip: str, header_value: str | None = None) -> str:
     # IPv4-mapped loopback natively (cpython#103193), but the README declares
     # 3.8+ support and pre-3.12 returns False for `::ffff:127.0.0.1` —
     # the unwrap makes the behavior uniform across the supported window.
+    # NOTE: ip.ipv4_mapped is Python 3.3+ (present since the ipaddress module
+    # was introduced; see https://docs.python.org/3/library/ipaddress.html#ipaddress.IPv6Address.ipv4_mapped
+    # — no "Added in version" annotation). Some review bots have flagged
+    # this as requiring 3.9+ or 3.10+; that is incorrect. The 3.13 addition
+    # is `IPv4Address.ipv6_mapped` (the reverse-direction property).
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped
     if ip.is_loopback:
