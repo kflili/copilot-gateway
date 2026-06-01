@@ -27,6 +27,7 @@ Usage:
 
 import gzip
 import http.server
+import ipaddress
 import json
 import logging
 import os
@@ -356,6 +357,39 @@ def log(msg: str):
 def masked_token(t: str) -> str:
     return t[:6] + "..." + t[-4:] if len(t) > 10 else "****"
 
+
+# ─── Origin classification ────────────────────────────────────────────────────
+# Tag each request by where the client lives so per-host usage is visible in
+# stats/logs. The X-Gateway-Origin header overrides IP-based classification —
+# WSL2 in `networkingMode=mirrored` appears from loopback (would otherwise
+# classify as "windows"), and the 172.16.0.0/12 RFC1918 range collides with
+# corporate LANs/VPNs/Docker if the gateway is ever bound to 0.0.0.0. The WSL
+# toggle in Item 3 writes the header into the WSL-side env so WSL clients
+# self-identify; the IP fallback covers users on the pre-toggle path.
+
+ORIGINS = ("windows", "wsl", "other")
+_WSL2_NET = ipaddress.ip_network("172.16.0.0/12")
+
+def _classify_origin(client_ip: str, header_value: str | None = None) -> str:
+    """Return 'windows' | 'wsl' | 'other' for a client. Header wins when set
+    to a known origin; otherwise classify by IP. Unknown header values fall
+    through to IP-based classification (prevents user-controlled stats-dict
+    pollution from arbitrary header values)."""
+    if header_value:
+        v = header_value.strip().lower()
+        if v in ORIGINS:
+            return v
+    try:
+        ip = ipaddress.ip_address(client_ip)
+    except (ValueError, TypeError):
+        return "other"
+    if ip.is_loopback:
+        return "windows"
+    if ip.version == 4 and ip in _WSL2_NET:
+        return "wsl"
+    return "other"
+
+
 # ─── Request Stats Tracker ────────────────────────────────────────────────────
 
 # Billing multipliers from Copilot CLI internals (nano-AIU based)
@@ -392,9 +426,15 @@ class RequestStats:
         self._estimated_premium = 0.0
         self._models = {}  # model -> {requests, input_tokens, output_tokens, premium_requests}
         self._last_request_at = None  # type: str | None
+        # Per-origin breakdown — keyed by ORIGINS values. Caller is responsible
+        # for passing a validated origin (see _classify_origin), so the key set
+        # stays bounded.
+        self._per_origin = {o: {"requests": 0, "requests_failed": 0,
+                                "input_tokens": 0, "output_tokens": 0,
+                                "last_request_at": None} for o in ORIGINS}
 
     def record_success(self, model: str, input_tokens: int, output_tokens: int,
-                       nano_aiu: int = 0):
+                       nano_aiu: int = 0, origin: str = "other"):
         """Record a successful request with usage data."""
         multiplier = BILLING_MULTIPLIERS.get(model, 1.0)
         premium = nano_aiu / 1_000_000_000 if nano_aiu else multiplier
@@ -418,9 +458,17 @@ class RequestStats:
             m["output_tokens"] += output_tokens
             m["premium_requests"] += premium
 
-    def record_failure(self):
+            po = self._per_origin.get(origin) or self._per_origin["other"]
+            po["requests"] += 1
+            po["input_tokens"] += input_tokens
+            po["output_tokens"] += output_tokens
+            po["last_request_at"] = now
+
+    def record_failure(self, origin: str = "other"):
         with self._lock:
             self._requests_failed += 1
+            po = self._per_origin.get(origin) or self._per_origin["other"]
+            po["requests_failed"] += 1
 
     def record_parse_failure(self):
         with self._lock:
@@ -441,6 +489,7 @@ class RequestStats:
                 "total_tokens": total_tokens,
                 "estimated_premium_requests": round(self._estimated_premium, 2),
                 "models": {k: dict(v) for k, v in self._models.items()},
+                "per_origin": {k: dict(v) for k, v in self._per_origin.items()},
                 "last_request_at": self._last_request_at,
             }
 
@@ -678,6 +727,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
     def _forward(self):
         method = self.command
         path = self.PATH_MAP.get(self.path.split("?")[0], self.path)
+        origin = _classify_origin(self.client_address[0],
+                                  self.headers.get("X-Gateway-Origin"))
 
         # Read request body
         content_length = int(self.headers.get("Content-Length", 0))
@@ -699,7 +750,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(err)
                     if request_stats:
-                        request_stats.record_failure()
+                        request_stats.record_failure(origin=origin)
                     return
             elif encoding == "gzip":
                 try:
@@ -714,7 +765,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(err)
                     if request_stats:
-                        request_stats.record_failure()
+                        request_stats.record_failure(origin=origin)
                     return
 
         # Parse request body for stream flag and model name
@@ -819,7 +870,7 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         url = _get_upstream() + path
         headers = self._upstream_headers(len(body) if body else 0)
 
-        log(f"{method} {path} → {url} (model={model}, stream={is_stream})")
+        log(f"{method} {path} → {url} (model={model}, stream={is_stream}, origin={origin})")
 
         # Try the request, auto-refresh token on 401
         resp, error_body, error_code = self._do_upstream(method, url, headers, body)
@@ -850,9 +901,9 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body_out)))
             self.end_headers()
             self.wfile.write(body_out)
-            log(f"  ← {error_code or 502} error: {body_out[:500]}")
+            log(f"  ← {error_code or 502} error: {body_out[:500]} (origin={origin})")
             if request_stats:
-                request_stats.record_failure()
+                request_stats.record_failure(origin=origin)
             return
 
         # Forward success response.
@@ -902,8 +953,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                                 pass
 
                 log(f"  ← {resp.status} streamed {total} bytes"
-                    f" (in={input_tokens}, out={output_tokens})")
-                self._record_usage(model, input_tokens, output_tokens, nano_aiu)
+                    f" (in={input_tokens}, out={output_tokens}, origin={origin})")
+                self._record_usage(model, input_tokens, output_tokens, nano_aiu, origin)
             else:
                 # Buffer the body so we can send an honest Content-Length.
                 data = resp.read()
@@ -919,18 +970,19 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 except (json.JSONDecodeError, ValueError):
                     pass
                 log(f"  ← {resp.status} ({len(data)} bytes)"
-                    f" (in={input_tokens}, out={output_tokens})")
-                self._record_usage(model, input_tokens, output_tokens, nano_aiu)
+                    f" (in={input_tokens}, out={output_tokens}, origin={origin})")
+                self._record_usage(model, input_tokens, output_tokens, nano_aiu, origin)
 
     def _record_usage(self, model: str, input_tokens: int, output_tokens: int,
-                      nano_aiu: int):
+                      nano_aiu: int, origin: str = "other"):
         """Record usage into global stats tracker."""
         if not request_stats:
             return
         if input_tokens or output_tokens:
-            request_stats.record_success(model, input_tokens, output_tokens, nano_aiu)
+            request_stats.record_success(model, input_tokens, output_tokens, nano_aiu,
+                                         origin=origin)
         else:
-            request_stats.record_success(model, 0, 0, 0)
+            request_stats.record_success(model, 0, 0, 0, origin=origin)
             request_stats.record_parse_failure()
 
     def _do_upstream(self, method, url, headers, body):
