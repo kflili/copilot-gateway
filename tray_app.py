@@ -13,11 +13,12 @@ thread. Menu callbacks (executing on pystray's worker) marshal UI work back to
 the tkinter thread via `root.after(0, fn)`. The stats poller is its own
 daemon thread.
 
-Bind safety: when the WSL toggle is on, the tray prefers binding to the
-specific WSL bridge IP (discovered by asking the chosen distro what its
-default-route gateway is). If that fails, it falls back to `0.0.0.0` with a
-prominent LAN-exposure warning toast, and the Stats popup always shows the
-current bind host with a coloured badge.
+Bind safety: by default the spawned gateway listens on `127.0.0.1`
+(loopback — no LAN or WSL reach). Passing `--host 0.0.0.0` makes it
+reachable from WSL and any LAN host; the Stats popup shows a
+`[LAN-EXPOSED]` posture line so the user always sees what they're
+listening on. Runtime re-bind on Enable-for-WSL toggle is deferred
+(see `docs/design/windows-app/plan.md` §"Out of Scope").
 
 Smoke mode: `python3 tray_app.py --smoke` runs platform/dependency probes,
 prints a one-line summary per probe, and exits — used for dev-side validation
@@ -74,15 +75,15 @@ def _quiet_run(cmd, **kw):
 
 
 def _decode_wsl_output(raw: bytes) -> str:
-    """`wsl.exe` writes UTF-16LE with a BOM (bot-triage residual #3/#8 from
-    PR #2). Decode that, falling back to UTF-8 if a future WSL release ever
-    flips the default."""
+    """Decode subprocess output that might be UTF-16LE (BOM-prefixed) or
+    plain UTF-8. `wsl.exe -l -q` is the only command that writes UTF-16LE
+    with a BOM (bot-triage residual #3/#8). Anything run *inside* a distro
+    via `wsl.exe -d <name> -- sh -c '...'` relays distro stdout as plain
+    UTF-8. Probing the BOM byte before attempting UTF-16 keeps codex-finding
+    `tray_app.py:81` from silently rendering UTF-8 bytes as Chinese chars."""
     if raw.startswith(b"\xff\xfe"):
-        return raw.decode("utf-16-le", errors="replace").lstrip("﻿")
-    try:
-        return raw.decode("utf-16-le", errors="strict").lstrip("﻿")
-    except UnicodeDecodeError:
-        return raw.decode("utf-8", errors="replace")
+        return raw[2:].decode("utf-16-le", errors="replace")
+    return raw.decode("utf-8", errors="replace")
 
 
 # ─── Gateway lifecycle ────────────────────────────────────────────────────────
@@ -100,18 +101,21 @@ class GatewayProcess:
 
     @property
     def stats_url(self) -> str:
-        h = "localhost" if self.host in ("0.0.0.0", "") else self.host
-        return f"http://{h}:{self.port}/stats"
+        return f"http://{self._probe_host()}:{self.port}/stats"
 
     @property
     def logs_url(self) -> str:
-        h = "localhost" if self.host in ("0.0.0.0", "") else self.host
-        return f"http://{h}:{self.port}/logs"
+        return f"http://{self._probe_host()}:{self.port}/logs"
 
     @property
     def health_url(self) -> str:
-        h = "localhost" if self.host in ("0.0.0.0", "") else self.host
-        return f"http://{h}:{self.port}/health"
+        return f"http://{self._probe_host()}:{self.port}/health"
+
+    def _probe_host(self) -> str:
+        """Hostname for our own HTTP probes. For a 0.0.0.0 / '' bind we
+        target 127.0.0.1 (which 0.0.0.0 listens on too), but `start()`
+        refuses to attach in that case — see the docstring there."""
+        return "127.0.0.1" if self.host in ("0.0.0.0", "") else self.host
 
     def already_running(self) -> bool:
         try:
@@ -126,8 +130,16 @@ class GatewayProcess:
             return False
 
     def start(self) -> str:
-        """Return one of: 'spawned', 'attached', 'missing-gateway'."""
-        if self.already_running():
+        """Return one of: 'spawned', 'attached', 'missing-gateway'.
+
+        For a `--host 0.0.0.0` bind we always spawn rather than attach to
+        whatever is already on 127.0.0.1, because an existing loopback-only
+        gateway would silently defeat the user's LAN-reach intent (per
+        copilot-pull-request-reviewer finding on `health_url`). When the port
+        is genuinely already bound to 0.0.0.0, the spawn fails noisily with
+        OSError — better than silent misuse.
+        """
+        if self.host not in ("0.0.0.0", "") and self.already_running():
             self.attached = True
             return "attached"
         if not GATEWAY_PY.exists():
@@ -217,20 +229,12 @@ def _resolve_static_wsl_base_url(distro: str, port: int) -> str | None:
     """
     if shutil.which("wsl.exe") is None:
         return None
-    # 1. mirrored mode check via Windows-side .wslconfig (visible from inside
-    #    WSL via /mnt/c/Users/*).
-    try:
-        r = _quiet_run(
-            ["wsl.exe", "-d", distro, "--", "sh", "-c",
-             "grep -lq 'networkingMode\\s*=\\s*mirrored' "
-             "/mnt/c/Users/*/.wslconfig 2>/dev/null && echo MIRRORED || true"],
-            timeout=5,
-        )
-        if r.returncode == 0 and b"MIRRORED" in r.stdout:
-            return f"http://127.0.0.1:{port}"
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-    # 2. host.docker.internal probe.
+    # 1. mirrored mode check — read Windows-side .wslconfig directly from
+    #    Python (cheaper than a wsl.exe subprocess round-trip).
+    if wsl_mirrored_mode():
+        return f"http://127.0.0.1:{port}"
+    # 2. host.docker.internal probe (must run inside the distro because the
+    #    Windows-side host doesn't have an /etc/hosts entry for it).
     try:
         r = _quiet_run(
             ["wsl.exe", "-d", distro, "--", "sh", "-c",
@@ -295,23 +299,27 @@ def wsl_mirrored_mode() -> bool:
 
 def enable_for_windows(base_url: str) -> tuple[bool, str]:
     """Write ANTHROPIC_* env to user-scope env via `setx` + merge into
-    `%USERPROFILE%\\.claude\\settings.json`. Returns (ok, message)."""
+    `%USERPROFILE%\\.claude\\settings.json`. Also sets `ANTHROPIC_CUSTOM_HEADERS`
+    so Windows-side traffic is tagged with `X-Gateway-Origin: windows`
+    explicitly (matching the WSL side). The header makes per-origin stats
+    accurate even when the gateway bind is on a non-loopback IP that would
+    otherwise IP-classify ambiguously. Returns (ok, message)."""
     if sys.platform != "win32":
         return (False, "Enable-for-Windows only runs on Windows hosts. "
                        "On macOS/Linux the toggle is a no-op (dev mode).")
-    ok_setx, msg_setx = _setx_user("ANTHROPIC_BASE_URL", base_url)
-    if not ok_setx:
-        return (False, msg_setx)
-    ok_tok, msg_tok = _setx_user("ANTHROPIC_AUTH_TOKEN", "dummy")
-    if not ok_tok:
-        return (False, msg_tok)
+    env_pairs = {
+        "ANTHROPIC_BASE_URL": base_url,
+        "ANTHROPIC_AUTH_TOKEN": "dummy",
+        "ANTHROPIC_CUSTOM_HEADERS": "X-Gateway-Origin: windows",
+    }
+    for name, value in env_pairs.items():
+        ok, msg = _setx_user(name, value)
+        if not ok:
+            return (False, msg)
     home = Path(os.environ.get("USERPROFILE") or os.path.expanduser("~"))
     cfg = home / ".claude" / "settings.json"
     try:
-        _merge_claude_settings(cfg, {
-            "ANTHROPIC_BASE_URL": base_url,
-            "ANTHROPIC_AUTH_TOKEN": "dummy",
-        })
+        _merge_claude_settings(cfg, env_pairs)
     except OSError as e:
         return (False, f"setx ok, but settings.json write failed: {e}")
     return (True, "Windows env updated. Restart any open terminals / IDEs to "
@@ -333,18 +341,40 @@ def _merge_claude_settings(path: Path, env_updates: dict[str, str]) -> None:
     """Merge env_updates into the file's `env` block, preserving everything
     else. Creates parent dir + file if missing. UTF-8 explicit because
     Path.read_text()/write_text() default to the system code page on Windows
-    (typically CP1252), which corrupts non-ASCII content in settings.json."""
+    (typically CP1252), which corrupts non-ASCII content in settings.json.
+
+    If the existing file is unparseable (bad JSON, or top-level isn't a JSON
+    object), we back it up to `<path>.cg-backup` before overwriting — the
+    silent reset codex flagged would lose user content otherwise."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data: dict = {}
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
+            raw = path.read_text(encoding="utf-8")
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                data = parsed
+            else:
+                _backup_unreadable(path, raw, reason="top-level JSON is not an object")
+        except (json.JSONDecodeError, OSError) as e:
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                raw = ""
+            _backup_unreadable(path, raw, reason=f"unparseable: {e}")
     env = data.get("env") if isinstance(data.get("env"), dict) else {}
     env.update(env_updates)
     data["env"] = env
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _backup_unreadable(path: Path, raw: str, reason: str) -> None:
+    """Stash unreadable settings.json content so we don't silently lose it."""
+    bak = path.with_suffix(path.suffix + ".cg-backup")
+    try:
+        bak.write_text(raw, encoding="utf-8")
+    except OSError:
+        pass  # best-effort; can't fail the main flow on backup failure
 
 
 # ─── WSL env injection (Enable for WSL toggle) ────────────────────────────────
@@ -378,14 +408,14 @@ _copilot_gateway_resolve_host() {{
         echo 127.0.0.1; return 0
     fi
     # 2. host.docker.internal (if user enabled it in .wslconfig)
-    local hd
-    hd=$(getent hosts host.docker.internal 2>/dev/null | awk '{{print $1}}' | head -1)
-    if [ -n "$hd" ]; then echo "$hd"; return 0; fi
+    _cg_hd=$(getent hosts host.docker.internal 2>/dev/null | awk '{{print $1}}' | head -1)
+    if [ -n "$_cg_hd" ]; then echo "$_cg_hd"; unset _cg_hd; return 0; fi
+    unset _cg_hd
     # 3. Default-route gateway (robust against systemd-resolved, custom DNS).
     #    `head -1` because VPN-active machines may report multiple defaults.
-    local gw
-    gw=$(ip route show default 2>/dev/null | head -1 | awk '{{print $3}}')
-    if [ -n "$gw" ]; then echo "$gw"; return 0; fi
+    _cg_gw=$(ip route show default 2>/dev/null | head -1 | awk '{{print $3}}')
+    if [ -n "$_cg_gw" ]; then echo "$_cg_gw"; unset _cg_gw; return 0; fi
+    unset _cg_gw
     # 4. Final fallback: first non-loopback nameserver from /etc/resolv.conf
     awk '/^nameserver/ && $2 !~ /^127\\./ {{print $2; exit}}' /etc/resolv.conf 2>/dev/null
 }}
@@ -522,18 +552,32 @@ def enable_for_wsl(distro: str, port: int) -> tuple[bool, str]:
         f"f=$HOME/.claude/settings.json; mkdir -p \"$(dirname \"$f\")\"; "
         f"[ -f \"$f\" ] || echo '{{}}' > \"$f\"; "
         f"BASE_URL='{static_url or ''}' python3 - \"$f\" <<'PY'\n"
-        "import json, os, sys\n"
+        "import json, os, shutil, sys\n"
         "p = sys.argv[1]\n"
         "base = os.environ.get('BASE_URL', '')\n"
-        "try: d = json.load(open(p))\n"
-        "except Exception: d = {}\n"
+        "try:\n"
+        "    raw = open(p).read()\n"
+        "    parsed = json.loads(raw)\n"
+        "    if isinstance(parsed, dict):\n"
+        "        d = parsed\n"
+        "    else:\n"
+        "        shutil.copyfile(p, p + '.cg-backup'); d = {}\n"
+        "except Exception:\n"
+        "    try: shutil.copyfile(p, p + '.cg-backup')\n"
+        "    except Exception: pass\n"
+        "    d = {}\n"
         "env = d.get('env') if isinstance(d.get('env'), dict) else {}\n"
         "env['ANTHROPIC_AUTH_TOKEN'] = 'dummy'\n"
         "env['ANTHROPIC_CUSTOM_HEADERS'] = 'X-Gateway-Origin: wsl'\n"
         "if base:\n"
         "    env['ANTHROPIC_BASE_URL'] = base\n"
+        # Codex CLI on WSL reads OPENAI_*, not ANTHROPIC_* — mirror for it
+        # too so VS Code WSL launches of codex also route through the gateway.
+        "    env['OPENAI_BASE_URL'] = base.rstrip('/') + '/v1'\n"
+        "    env['OPENAI_API_KEY'] = 'dummy'\n"
         "else:\n"
         "    env.pop('ANTHROPIC_BASE_URL', None)\n"
+        "    env.pop('OPENAI_BASE_URL', None)\n"
         "    d['_comment_base_url'] = ('ANTHROPIC_BASE_URL omitted: '\n"
         "        'mirrored mode is off and host.docker.internal does not '\n"
         "        'resolve. Set it manually or enable mirrored mode in '\n"
@@ -609,27 +653,33 @@ class StatsPoller(threading.Thread):
         super().__init__(daemon=True, name="StatsPoller")
         self.gateway = gateway
         self.on_update = on_update
-        self._stop = threading.Event()
+        # `_stop_event` (not `_stop`) — threading.Thread has a private `_stop()`
+        # method called during interpreter shutdown. Shadowing it with an
+        # Event raises `TypeError: 'Event' object is not callable` on exit.
+        self._stop_event = threading.Event()
 
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
 
     def run(self):
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             snap = self._fetch_once()
             try:
                 self.on_update(snap)
             except Exception:  # noqa: BLE001 — never let UI bugs kill the poller
                 pass
-            self._stop.wait(STATS_POLL_INTERVAL_S)
+            self._stop_event.wait(STATS_POLL_INTERVAL_S)
 
     def _fetch_once(self) -> dict | None:
         try:
             with urllib.request.urlopen(self.gateway.stats_url,
                                         timeout=HTTP_TIMEOUT_S) as resp:
                 return json.loads(resp.read().decode())
-        except (urllib.error.URLError, socket.timeout,
-                json.JSONDecodeError, ConnectionError, OSError):
+        except Exception:  # noqa: BLE001
+            # Includes URLError/HTTPError/socket.timeout/ConnectionError/OSError
+            # plus the long tail of http.client.HTTPException, ssl.SSLError,
+            # UnicodeDecodeError, and JSONDecodeError. Polling should NEVER
+            # bring down the tray; a None return shows as "[gateway offline]".
             return None
 
 
@@ -660,6 +710,20 @@ def _build_tray_icon_image():
     d.ellipse((4, 4, 60, 60), fill=(20, 120, 200, 255))
     d.text((20, 18), "CG", fill=(255, 255, 255, 255))
     return img
+
+
+def _raise_to_front(win):
+    """Tkinter Toplevel windows on Windows can spawn behind other apps. lift +
+    a brief focus_force pulls them forward without keeping the always-on-top
+    state set (we drop -topmost after a tick so the window behaves normally
+    once visible)."""
+    try:
+        win.lift()
+        win.attributes("-topmost", True)
+        win.focus_force()
+        win.after(200, lambda: win.attributes("-topmost", False))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class TrayUI:
@@ -747,6 +811,13 @@ class TrayUI:
     # — Stats callback (poller thread → marshalled to main) —
 
     def _on_stats(self, snap: dict | None):
+        """Called from the poller's background thread; marshal the actual
+        UI mutation to the tkinter main thread. `icon.title=` is thread-safe
+        on pystray but tk_root state mutations are not, and a future tweak
+        that touches tk inline here would race silently."""
+        self.root.after(0, lambda: self._on_stats_main(snap))
+
+    def _on_stats_main(self, snap: dict | None):
         self.latest_snap = snap
         title = format_title(snap)
         try:
@@ -798,7 +869,10 @@ class TrayUI:
                 with urllib.request.urlopen(self.gateway.logs_url + "?n=200",
                                             timeout=HTTP_TIMEOUT_S) as resp:
                     body = resp.read().decode(errors="replace")
-            except (urllib.error.URLError, socket.timeout, OSError) as e:
+            except Exception as e:  # noqa: BLE001
+                # Catch the long tail (http.client.HTTPException, ssl.SSLError,
+                # UnicodeDecodeError on a corrupt log) so the popup always
+                # renders something rather than silently hanging on "loading…".
                 body = f"(error fetching logs: {e})"
             self.root.after(0, lambda: _render(body))
 
@@ -820,14 +894,26 @@ class TrayUI:
                          name="logs-fetch").start()
 
     def _copy_claude(self):
-        cmd = (f"ANTHROPIC_BASE_URL={self.base_url} "
-               f"ANTHROPIC_AUTH_TOKEN=dummy claude")
+        # On Windows we target cmd.exe / PowerShell syntax (`set X=Y` or
+        # `$env:X="Y"`) rather than POSIX `VAR=val cmd` which cmd.exe parses
+        # as a bare command name. We emit PowerShell since most modern Windows
+        # users have it open by default.
+        if sys.platform == "win32":
+            cmd = (f"$env:ANTHROPIC_BASE_URL='{self.base_url}'; "
+                   f"$env:ANTHROPIC_AUTH_TOKEN='dummy'; claude")
+        else:
+            cmd = (f"ANTHROPIC_BASE_URL={self.base_url} "
+                   f"ANTHROPIC_AUTH_TOKEN=dummy claude")
         self._clip(cmd)
         self._toast("Copied", f"Copied to clipboard:\n\n{cmd}", ok=True)
 
     def _copy_codex(self):
-        cmd = (f"OPENAI_BASE_URL={self.base_url}/v1 "
-               f"OPENAI_API_KEY=dummy codex")
+        if sys.platform == "win32":
+            cmd = (f"$env:OPENAI_BASE_URL='{self.base_url}/v1'; "
+                   f"$env:OPENAI_API_KEY='dummy'; codex")
+        else:
+            cmd = (f"OPENAI_BASE_URL={self.base_url}/v1 "
+                   f"OPENAI_API_KEY=dummy codex")
         self._clip(cmd)
         self._toast("Copied", f"Copied to clipboard:\n\n{cmd}", ok=True)
 
@@ -889,6 +975,7 @@ class TrayUI:
         text.insert("1.0", body)
         text.config(state="disabled")
         text.pack(fill="both", expand=True, padx=8, pady=8)
+        _raise_to_front(win)
 
     def _toast(self, title: str, msg: str, ok: bool):
         tk = self.tk
@@ -901,6 +988,7 @@ class TrayUI:
         lbl.pack()
         btn = tk.Button(win, text="OK", command=win.destroy)
         btn.pack(pady=(0, 8))
+        _raise_to_front(win)
 
     # — Lifecycle —
 
@@ -991,8 +1079,13 @@ def main(argv: list[str] | None = None) -> int:
     # see Out of Scope in plan.md).
     distros = list_wsl_distros()
     initial_host = args.host or GATEWAY_DEFAULT_HOST
+    # Treat '' (which Python's HTTPServer accepts as "all interfaces") the
+    # same as 0.0.0.0 for our purposes — both LAN-expose. Normalize so
+    # downstream URL formatting doesn't produce `http://:8787`.
+    if initial_host == "":
+        initial_host = "0.0.0.0"
     bind_posture = "loopback" if initial_host == "127.0.0.1" else (
-        "lan-exposed" if initial_host in ("0.0.0.0", "") else "wsl-bridge")
+        "lan-exposed" if initial_host == "0.0.0.0" else "wsl-bridge")
 
     gateway = GatewayProcess(initial_host, args.port)
     status = gateway.start()
@@ -1001,6 +1094,10 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
+    # base_url is what we hand to clients (Copy claude / Copy codex). When
+    # binding to a non-loopback IP, clients on this Windows box still reach
+    # us via that IP — but we present 127.0.0.1 for loopback to keep the
+    # copy-paste cleanest.
     base_url = (f"http://localhost:{args.port}" if initial_host in ("0.0.0.0",
                 "127.0.0.1") else f"http://{initial_host}:{args.port}")
 
