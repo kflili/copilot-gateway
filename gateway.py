@@ -383,6 +383,12 @@ def _classify_origin(client_ip: str, header_value: str | None = None) -> str:
         ip = ipaddress.ip_address(client_ip)
     except (ValueError, TypeError):
         return "other"
+    # Unwrap IPv4-mapped IPv6 (e.g. `::ffff:172.16.0.1` — a WSL2 client
+    # reaching a dual-stack `::`-bound gateway). `is_loopback` already
+    # handles `::ffff:127.0.0.1` correctly; the unwrap matters for the
+    # WSL2-range check below which is gated on `ip.version == 4`.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
     if ip.is_loopback:
         return "windows"
     if ip.version == 4 and ip in _WSL2_NET:
