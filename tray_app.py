@@ -111,6 +111,11 @@ class GatewayProcess:
         try:
             with urllib.request.urlopen(self.health_url, timeout=HTTP_TIMEOUT_S):
                 return True
+        except urllib.error.HTTPError:
+            # An HTTP error (500, 403, etc.) means *something* is bound to this
+            # port and answering — spawning a second gateway would race for the
+            # same socket and OSError. Treat as "running" so we attach instead.
+            return True
         except (urllib.error.URLError, socket.timeout, ConnectionError):
             return False
 
@@ -220,12 +225,18 @@ def wsl_mirrored_mode() -> bool:
     if not cfg.exists():
         return False
     try:
-        text = cfg.read_text(errors="replace")
+        text = cfg.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    for line in text.splitlines():
-        s = line.strip().lower().replace(" ", "")
-        if s.startswith("networkingmode=mirrored"):
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        if key.strip().lower() == "networkingmode" and \
+                value.strip().lower() == "mirrored":
             return True
     return False
 
@@ -271,18 +282,20 @@ def _setx_user(name: str, value: str) -> tuple[bool, str]:
 
 def _merge_claude_settings(path: Path, env_updates: dict[str, str]) -> None:
     """Merge env_updates into the file's `env` block, preserving everything
-    else. Creates parent dir + file if missing."""
+    else. Creates parent dir + file if missing. UTF-8 explicit because
+    Path.read_text()/write_text() default to the system code page on Windows
+    (typically CP1252), which corrupts non-ASCII content in settings.json."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data: dict = {}
     if path.exists():
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             data = {}
     env = data.get("env") if isinstance(data.get("env"), dict) else {}
     env.update(env_updates)
     data["env"] = env
-    path.write_text(json.dumps(data, indent=2))
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 # ─── WSL env injection (Enable for WSL toggle) ────────────────────────────────
@@ -378,19 +391,23 @@ def enable_for_wsl(distro: str, port: int) -> tuple[bool, str]:
     # introduces CRLF line endings that bash will refuse to parse. Instead,
     # shell out and let the WSL-side `sh` do the file mutation — line endings
     # stay LF natively.
+    #
+    # `set -e` makes any step (awk, cat, mv) abort the script on failure,
+    # leaving the user's rc-file untouched (we only `mv` over it at the end).
+    # If awk fails on full disk / permission flip, `$rc` is never clobbered;
+    # `$rc.cg-tmp` may linger but is harmless and self-overwritten next run.
     rewrite_script = f"""
+        set -e
         rc='{rc_path}'
         eval rc=\"$rc\"
         mkdir -p "$(dirname "$rc")"
         touch "$rc"
-        # Strip any existing block between our markers, then append fresh.
         awk '/{WSL_RC_BLOCK_MARKER}/{{skip=1}} \
              !skip; \
              /{WSL_RC_BLOCK_END}/{{skip=0; next}}' "$rc" > "$rc.cg-tmp"
-        cat "$rc.cg-tmp" > "$rc"
-        rm -f "$rc.cg-tmp"
-        cat >> "$rc" <<'CG_EOF'
+        cat >> "$rc.cg-tmp" <<'CG_EOF'
 {block}CG_EOF
+        mv "$rc.cg-tmp" "$rc"
     """
     try:
         r = _quiet_run(["wsl.exe", "-d", distro, "--", "sh", "-c", rewrite_script],
@@ -655,29 +672,44 @@ class TrayUI:
 
     def _show_logs(self):
         tk = self.tk
-        try:
-            with urllib.request.urlopen(self.gateway.logs_url + "?n=200",
-                                        timeout=HTTP_TIMEOUT_S) as resp:
-                body = resp.read().decode(errors="replace")
-        except (urllib.error.URLError, socket.timeout, OSError) as e:
-            body = f"(error fetching logs: {e})"
-
         win = tk.Toplevel(self.root)
         win.title("Gateway logs (last 200)")
         win.geometry("900x500")
         text = tk.Text(win, font=("Menlo", 10), wrap="none")
         text.pack(fill="both", expand=True)
-        for line in body.splitlines():
-            tag = "other"
-            if "origin=windows" in line:
-                tag = "windows"
-            elif "origin=wsl" in line:
-                tag = "wsl"
-            text.insert("end", line + "\n", tag)
         text.tag_config("windows", foreground="#1565c0")
         text.tag_config("wsl", foreground="#2e7d32")
         text.tag_config("other", foreground="#666666")
+        text.insert("end", "(loading logs…)\n", "other")
         text.config(state="disabled")
+
+        # Fetch on a worker thread so a slow /logs response doesn't freeze the
+        # entire tray + tkinter event loop for up to HTTP_TIMEOUT_S seconds.
+        def _fetch():
+            try:
+                with urllib.request.urlopen(self.gateway.logs_url + "?n=200",
+                                            timeout=HTTP_TIMEOUT_S) as resp:
+                    body = resp.read().decode(errors="replace")
+            except (urllib.error.URLError, socket.timeout, OSError) as e:
+                body = f"(error fetching logs: {e})"
+            self.root.after(0, lambda: _render(body))
+
+        def _render(body: str):
+            if not win.winfo_exists():
+                return
+            text.config(state="normal")
+            text.delete("1.0", "end")
+            for line in body.splitlines():
+                tag = "other"
+                if "origin=windows" in line:
+                    tag = "windows"
+                elif "origin=wsl" in line:
+                    tag = "wsl"
+                text.insert("end", line + "\n", tag)
+            text.config(state="disabled")
+
+        threading.Thread(target=_fetch, daemon=True,
+                         name="logs-fetch").start()
 
     def _copy_claude(self):
         cmd = (f"ANTHROPIC_BASE_URL={self.base_url} "
