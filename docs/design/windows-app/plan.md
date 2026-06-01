@@ -38,12 +38,21 @@ exclusively from this doc — not from the orchestration scaffold-prompt.
 - ✅ **Tray stack: `pystray` + `tkinter`** for the tray icon + popups; `tkinter`
   ships with the stdlib Python embedded by PyInstaller. `pywebview` reserved as
   a fallback for the dashboard window if `tkinter` rendering proves too clunky.
-  **Threading model**: `tkinter` runs on the **main thread** (its `mainloop()`
-  is non-reentrant and `tkinter` is not thread-safe); `pystray` runs in a
-  worker thread. Menu callbacks invoked by `pystray` marshal UI work back to
-  `tkinter` via `root.after(0, fn)`, which queues `fn` for execution on the
-  tkinter main loop. Long-running probe work (Test buttons, env writes) runs
-  in its own thread so the tray + UI stay responsive.
+  **Threading model (Windows)**: per `pystray`'s FAQ for non-macOS platforms,
+  use plain `icon.run()` in a worker thread (NOT `run_detached()` — which
+  documentation says must be called from the main thread and is intended as a
+  pre-mainloop hand-off pattern). `tkinter.mainloop()` owns the main thread.
+  `pystray` worker-thread menu callbacks marshal UI work back via
+  `root.after(0, fn)`, which queues `fn` for execution on the tkinter main
+  loop. Long-running probe work (Test buttons, env writes, subprocess calls)
+  runs in its own thread so the tray + UI stay responsive. Concretely:
+
+  ```
+  # main thread
+  root = tk.Tk(); root.withdraw()
+  threading.Thread(target=icon.run, daemon=True).start()
+  root.mainloop()
+  ```
 - ✅ **PyInstaller single-file `.exe`** — bundles `gateway.py`, `tray_app.py`,
   `demo.py`, `demo.html`, plus the `pystray`/`tkinter` deps. PowerShell build
   script (`build-windows.ps1`) for reproducibility.
@@ -243,8 +252,16 @@ know what they're listening on.
   - Always also update `~/.claude/settings.json` `env` block (shell-agnostic,
     picked up by `claude` itself regardless of shell — useful for non-rc-file
     invocations like the VS Code WSL extension).
-  - `[Test]` button: `wsl.exe -d <distro> -- bash -lc 'claude --help'` (forces
-    a login shell so the wrapper function loads), same green/red toast.
+  - `[Test]` button: invokes the detected shell in **interactive** mode so the
+    rc-file wrapper actually loads:
+    - `bash` → `wsl.exe -d <distro> -- bash -ic 'claude --help'` (interactive
+      forces `~/.bashrc` to load; `-l`/`--login` would read `/etc/profile` +
+      `~/.bash_profile`/`~/.bash_login`/`~/.profile` but skip `~/.bashrc`).
+    - `zsh` → `wsl.exe -d <distro> -- zsh -ic 'claude --help'`.
+    - `fish` → `wsl.exe -d <distro> -- fish -c 'claude --help'` (fish reads
+      `config.fish` for non-interactive shells too).
+    - `~/.profile` fallback → `wsl.exe -d <distro> -- sh -lc 'claude --help'`.
+    Pops the same green/red toast as the Windows side.
 - **Stop & quit** — graceful gateway shutdown + tray exit.
 
 **State**: tray reads from `/stats` and `/logs`; does NOT maintain its own
@@ -371,10 +388,13 @@ user-facing artifact; document the slower cold-start as an acceptable trade-off.
   fallback list).
 - **`pystray` + `tkinter` threading mishap** — `tkinter` is not thread-safe and
   expects its main loop on the process main thread; `pystray` menu callbacks
-  may fire on background threads (platform-dependent). Mitigation: keep
-  `tkinter.mainloop()` on the main thread, run `pystray.Icon.run_detached()`
-  in a worker thread, and marshal all UI updates back via `root.after(0, fn)`.
-  Documented as the canonical pattern in Item 3's Key Decisions.
+  may fire on background threads (platform-dependent); `pystray.Icon.run_detached()`
+  itself is documented as main-thread-only and is the wrong primitive for the
+  worker-thread pattern. Mitigation: keep `tkinter.mainloop()` on the main
+  thread, run plain `icon.run()` (NOT `run_detached()`) in a worker thread per
+  pystray's non-macOS FAQ, and marshal all UI updates back via
+  `root.after(0, fn)`. Documented as the canonical pattern in Item 3's Key
+  Decisions with a code snippet.
 
 ## Out of Scope (intentional)
 
