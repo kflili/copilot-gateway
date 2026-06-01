@@ -1008,10 +1008,12 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         headers = {}
         for key in self.headers:
             lk = key.lower()
-            # Drop client auth, hop-by-hop, encoding, and unsupported beta headers
+            # Drop client auth, hop-by-hop, encoding, unsupported beta headers,
+            # and gateway-internal headers (x-gateway-origin is read once in
+            # _forward for stats classification — never proxied upstream).
             if lk in ("host", "connection", "transfer-encoding",
                        "x-api-key", "authorization", "accept-encoding",
-                       "anthropic-beta"):
+                       "anthropic-beta", "x-gateway-origin"):
                 continue
             headers[key] = self.headers[key]
         headers["Authorization"] = f"Bearer {token_mgr.token}"
