@@ -381,6 +381,11 @@ def _classify_origin(client_ip: str, header_value: str | None = None) -> str:
         v = header_value.strip().lower()
         if v in ORIGINS:
             return v
+    # Strip IPv6 zone-ID (RFC 6874 scope, e.g. `::1%lo0`, `fe80::1%eth0`) —
+    # Python's ipaddress.ip_address only learned to parse these in 3.9, but
+    # the README declares 3.8+ support.
+    if isinstance(client_ip, str) and "%" in client_ip:
+        client_ip = client_ip.split("%", 1)[0]
     try:
         ip = ipaddress.ip_address(client_ip)
     except (ValueError, TypeError):
