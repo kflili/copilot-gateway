@@ -38,6 +38,12 @@ exclusively from this doc — not from the orchestration scaffold-prompt.
 - ✅ **Tray stack: `pystray` + `tkinter`** for the tray icon + popups; `tkinter`
   ships with the stdlib Python embedded by PyInstaller. `pywebview` reserved as
   a fallback for the dashboard window if `tkinter` rendering proves too clunky.
+  **Threading model**: `tkinter` runs on the **main thread** (its `mainloop()`
+  is non-reentrant and `tkinter` is not thread-safe); `pystray` runs in a
+  worker thread. Menu callbacks invoked by `pystray` marshal UI work back to
+  `tkinter` via `root.after(0, fn)`, which queues `fn` for execution on the
+  tkinter main loop. Long-running probe work (Test buttons, env writes) runs
+  in its own thread so the tray + UI stay responsive.
 - ✅ **PyInstaller single-file `.exe`** — bundles `gateway.py`, `tray_app.py`,
   `demo.py`, `demo.html`, plus the `pystray`/`tkinter` deps. PowerShell build
   script (`build-windows.ps1`) for reproducibility.
@@ -123,6 +129,12 @@ NOT bundle this; this is its own small PR (`feat/gateway-origin-tagging`).
   - In `172.16.0.0/12` ⇒ `"wsl"` (use `ipaddress.ip_network("172.16.0.0/12")`
     from stdlib; covers the full WSL2 NAT range)
   - Anything else ⇒ `"other"`
+- **Mirrored-mode caveat**: WSL2 `networkingMode=mirrored` (WSL 2.0+) makes WSL
+  traffic appear from loopback, so the classifier above will tag mirrored-mode
+  WSL traffic as `"windows"`. This is a known limitation; users who run
+  mirrored mode see their WSL traffic in the Windows column. Listed under Risks
+  with the proposed remediation (an optional client-side header
+  `X-Gateway-Origin: wsl` written by the WSL toggle).
 - Extend `RequestStats` snapshot: add `per_origin: {windows: {...}, wsl: {...},
   other: {...}}` with the same shape as the top-level counters (requests,
   input/output tokens, last_request_at).
@@ -149,6 +161,15 @@ tray-side display (Item 3), packaging (Item 5).
 **Dependencies on Item 2**: the per-host counters in the tray title + stats popup
 read `per_origin` from `/stats`. Item 3 must merge AFTER Item 2.
 
+**Gateway bind address**: by default `gateway.py` listens on
+`LISTEN_HOST=127.0.0.1` (loopback only), which makes it unreachable from WSL
+distros over the host-side IP. The tray app launches `gateway.py` with
+`--host 0.0.0.0` (or the explicit Windows-facing IP) **only when the WSL toggle
+is enabled** — keeping the default loopback-only bind when only Windows is
+enabled, to avoid exposing the gateway to other machines on the LAN
+unnecessarily. The bind-host choice is surfaced in the tray Stats popup so users
+know what they're listening on.
+
 **Tray title** (live, polled from `/stats` every ~2s):
 ```
 [WIN 47 reqs / 12.3k tok] [WSL 18 reqs / 4.2k tok]
@@ -167,18 +188,39 @@ read `per_origin` from `/stats`. Item 3 must merge AFTER Item 2.
   - Run `setx ANTHROPIC_AUTH_TOKEN dummy`
   - Update `%USERPROFILE%\.claude\settings.json` `env` block (preserve other
     keys; create file if missing)
-  - `[Test]` button: spawn a one-shot `claude --help` probe in a new shell and
-    pop a green toast on success / red on failure.
+  - Post-write UI: `setx` only updates the master environment in the registry;
+    it does NOT affect already-running processes (Command Prompts, PowerShell
+    windows, VS Code, etc.). Show a "Restart your terminals / IDEs to pick up
+    the new env" toast after a successful enable, and a link to a help dialog
+    explaining why.
+  - `[Test]` button: spawn a one-shot `claude --help` probe in a **new** shell
+    (which inherits the freshly-set env) and pop a green toast on success / red
+    on failure.
 - **Enable for WSL** — submenu listing distros from `wsl.exe -l -q`.
   Selecting a distro:
-  - Resolve Windows host IP inside the chosen distro: read first `nameserver`
-    line from `/etc/resolv.conf`, fall back to `host.docker.internal` if user
-    has `hostForwarding=true`.
-  - Append/replace `export ANTHROPIC_BASE_URL=http://<host_ip>:8787` and
-    `export ANTHROPIC_AUTH_TOKEN=dummy` in `~/.bashrc` (idempotent — match by
-    marker comment).
-  - Update `~/.claude/settings.json` `env` block.
-  - `[Test]` button: `wsl.exe -d <distro> -- claude --help`, same green/red toast.
+  - **Detect host-reachability mode** inside the chosen distro, in priority
+    order:
+    1. If `/etc/wsl.conf` or the parent `.wslconfig` enables
+       `networkingMode=mirrored` (WSL 2.0+), the Windows host is reachable at
+       `localhost` / `127.0.0.1` — use that. No nameserver lookup needed.
+    2. Else if `host.docker.internal` resolves (user enabled
+       `hostForwarding=true`), use it.
+    3. Else read the first `nameserver` line from `/etc/resolv.conf` and use
+       that IP.
+    The toggle persists the resolved value rather than re-resolving each
+    session, so a corporate `resolv.conf` rewrite doesn't break things later.
+  - **Detect the user's default shell** (`getent passwd $USER | cut -d: -f7`)
+    and write the env exports to the matching rc file with an idempotent marker
+    comment:
+    - `bash` → `~/.bashrc`
+    - `zsh` → `~/.zshrc` (common on Oh My Zsh installs)
+    - `fish` → `~/.config/fish/config.fish` (using `set -gx` syntax, not
+      `export`)
+    - other → fall back to `~/.profile` and surface a warning toast
+  - Always also update `~/.claude/settings.json` `env` block (shell-agnostic,
+    picked up by `claude` itself regardless of shell).
+  - `[Test]` button: `wsl.exe -d <distro> -- bash -lc 'claude --help'` (forces
+    a login shell so rc files load), same green/red toast.
 - **Stop & quit** — graceful gateway shutdown + tray exit.
 
 **State**: tray reads from `/stats` and `/logs`; does NOT maintain its own
@@ -253,10 +295,35 @@ user-facing artifact; document the slower cold-start as an acceptable trade-off.
 - **`tkinter` rendering on Windows** can look dated — mitigation: if the
   Stats/Logs popups feel too clunky, fall back to `pywebview` (already on the
   fallback list).
+- **`pystray` + `tkinter` threading mishap** — `tkinter` is not thread-safe and
+  expects its main loop on the process main thread; `pystray` menu callbacks
+  may fire on background threads (platform-dependent). Mitigation: keep
+  `tkinter.mainloop()` on the main thread, run `pystray.Icon.run_detached()`
+  in a worker thread, and marshal all UI updates back via `root.after(0, fn)`.
+  Documented as the canonical pattern in Item 3's Key Decisions.
+- **WSL2 `networkingMode=mirrored` misclassifies WSL traffic as `windows`** —
+  mirrored mode (WSL 2.0+) makes WSL connect from loopback, defeating IP-based
+  classification. Mitigation v1: documented limitation; users see WSL traffic
+  in the Windows column. Mitigation v2 (future): the WSL toggle writes an
+  optional `X-Gateway-Origin: wsl` request header into the WSL-side env
+  (`ANTHROPIC_CUSTOM_HEADERS`) and `gateway.py` honors it as an override when
+  present. Held off v1 to keep Item 2 small.
 - **WSL host-IP resolution edge cases** — users on locked-down corporate
   networks may have `/etc/resolv.conf` overridden; mitigation: the `[Test]`
-  button surfaces the failure immediately, and the toggle persists the
-  user-chosen IP rather than re-resolving each session.
+  button surfaces the failure immediately, the toggle persists the
+  user-chosen IP rather than re-resolving each session, and the priority order
+  (mirrored → host.docker.internal → resolv.conf) gives the WSL toggle three
+  fallbacks before failing.
+- **WSL default-shell variance** — Oh My Zsh / fish users would have plain
+  `~/.bashrc` writes silently ignored. Mitigation: Item 3's "Enable for WSL"
+  flow detects `$SHELL` and writes to the matching rc file, plus always
+  updates `~/.claude/settings.json` (shell-agnostic) as a belt-and-braces
+  fallback.
+- **`setx` does not affect already-running processes** — the master env is
+  updated in the registry but existing terminals / IDEs keep their inherited
+  env until restart. Mitigation: post-enable toast prompts the user to
+  restart terminals; the `[Test]` button always spawns a fresh shell so users
+  see immediate green/red feedback without restarting anything.
 - **`setx` PATH-length limits** (1024 chars on some Windows versions) —
   mitigation: only write the two env vars we control; do not concatenate.
 - **PyInstaller cold-start** on first launch (a few seconds while the bundle
