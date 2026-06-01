@@ -385,10 +385,13 @@ def _classify_origin(client_ip: str, header_value: str | None = None) -> str:
         ip = ipaddress.ip_address(client_ip)
     except (ValueError, TypeError):
         return "other"
-    # Unwrap IPv4-mapped IPv6 (e.g. `::ffff:172.16.0.1` — a WSL2 client
-    # reaching a dual-stack `::`-bound gateway). `is_loopback` already
-    # handles `::ffff:127.0.0.1` correctly; the unwrap matters for the
-    # WSL2-range check below which is gated on `ip.version == 4`.
+    # Unwrap IPv4-mapped IPv6 (e.g. `::ffff:127.0.0.1` from a loopback client
+    # or `::ffff:172.16.0.1` from a WSL2 client reaching a dual-stack
+    # `::`-bound gateway) so both the is_loopback and WSL-range checks below
+    # see the IPv4 form. Python 3.12+ IPv6Address.is_loopback recognizes
+    # IPv4-mapped loopback natively (cpython#103193), but the README declares
+    # 3.8+ support and pre-3.12 returns False for `::ffff:127.0.0.1` —
+    # the unwrap makes the behavior uniform across the supported window.
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped
     if ip.is_loopback:
