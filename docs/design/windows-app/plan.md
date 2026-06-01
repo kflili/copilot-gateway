@@ -432,3 +432,14 @@ later, it gets its own plan under `docs/design/`.
     grows enough to warrant unit tests.
   - When-it-should-be-done: when the repo gains a second maintainer or the
     code surface doubles.
+- **Runtime gateway re-bind on Enable-for-WSL toggle** — the tray's
+  Enable-for-WSL writes env into the chosen distro but does NOT stop and
+  restart the gateway subprocess against a new `--host`. Users pick the
+  bind host at tray launch (`python tray_app.py --host 0.0.0.0` for LAN-
+  exposed WSL access, or default `127.0.0.1` for loopback-only); the Stats
+  popup shows current posture.
+  - Destination: future `docs/design/tray-rebind-on-toggle/plan.md` (write
+    when first user requests it).
+  - When-it-should-be-done: when toggle-driven rebind becomes a friction
+    point in practice. `tray_app.py:select_bind_host()` already returns the
+    target host given a toggle state, so wiring is straightforward.
