@@ -35,7 +35,6 @@ import logging
 import os
 import pathlib
 import secrets
-import signal
 import subprocess
 import sys
 import threading
@@ -1189,30 +1188,40 @@ def main():
                 demo_log_file.close()
                 demo_log_file = None
 
-    # Launch menu bar indicator if binary exists (skip if app manages menubar)
+    # Launch menu bar indicator if binary exists (skip if one is already running)
     menubar_proc = None
     menubar_bin = HERE / "menubar"
     if menubar_bin.exists() and not os.environ.get("GATEWAY_NO_MENUBAR"):
-        # Kill any stale menubar processes from previous runs
-        try:
-            result = subprocess.run(
-                ["pgrep", "-x", "menubar"], capture_output=True, text=True
-            )
-            for pid_str in result.stdout.strip().split("\n"):
-                pid_str = pid_str.strip()
-                if pid_str:
-                    try:
-                        os.kill(int(pid_str), signal.SIGTERM)
-                        log(f"killed stale menubar (PID {pid_str})")
-                    except (ProcessLookupError, ValueError):
-                        pass
-        except FileNotFoundError:
-            pass
-        try:
-            menubar_proc = subprocess.Popen([str(menubar_bin)])
-            log(f"menu bar indicator started (PID {menubar_proc.pid})")
-        except Exception as e:
-            log(f"menu bar indicator failed: {e}")
+        # Adopt-don't-replace: if a menu-bar process is already drawing the icon
+        # — standalone `menubar` binary OR the bundled CopilotGateway.app, which
+        # has its own menu-bar UI — leave it alone. Killing-and-respawning
+        # flickers the icon for no benefit, and not detecting CopilotGateway.app
+        # caused duplicate icons to stack on the macOS status bar.
+        def _first_pid(args: list[str]) -> str | None:
+            try:
+                r = subprocess.run(args, capture_output=True, text=True)
+            except FileNotFoundError:
+                return None
+            for line in r.stdout.splitlines():
+                pid = line.strip()
+                if pid:
+                    return pid
+            return None
+
+        standalone_pid = _first_pid(["pgrep", "-x", "menubar"])
+        app_pid = _first_pid(
+            ["pgrep", "-f", "CopilotGateway.app/Contents/MacOS/CopilotGateway"]
+        )
+        if standalone_pid:
+            log(f"menu bar indicator already running (PID {standalone_pid}) — skip launch")
+        elif app_pid:
+            log(f"CopilotGateway.app running (PID {app_pid}) — skip menubar launch (app provides its own)")
+        else:
+            try:
+                menubar_proc = subprocess.Popen([str(menubar_bin)])
+                log(f"menu bar indicator started (PID {menubar_proc.pid})")
+            except Exception as e:
+                log(f"menu bar indicator failed: {e}")
 
     server = http.server.ThreadingHTTPServer((host, port), GatewayHandler)
     try:

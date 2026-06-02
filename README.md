@@ -319,11 +319,11 @@ rm -rf logs/2026-04-01/                  # delete a specific day
 
 ## What `python3 gateway.py` Launches
 
-A single command starts three processes:
+A single command starts up to three processes:
 
 1. **Gateway** on `:8787` — the LLM API proxy
 2. **Demo UI** on `:8788` — chat + call flow visualization
-3. **⚡️CG menu bar** — macOS status bar indicator
+3. **⚡️CG menu bar** — macOS status bar indicator (skipped if one is already drawing the icon — either a standalone `menubar` from a previous gateway or the bundled `CopilotGateway.app`, which has its own menu-bar UI)
 
 The ⚡️CG menu bar shows:
 - **⚡️CG 42↗ 170K** — live request count and total tokens (updates every 30s)
