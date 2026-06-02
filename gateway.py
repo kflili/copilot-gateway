@@ -1199,8 +1199,8 @@ def main():
         # caused duplicate icons to stack on the macOS status bar.
         def _first_pid(args: list[str]) -> str | None:
             try:
-                r = subprocess.run(args, capture_output=True, text=True)
-            except FileNotFoundError:
+                r = subprocess.run(args, capture_output=True, text=True, timeout=5)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
                 return None
             for line in r.stdout.splitlines():
                 pid = line.strip()
