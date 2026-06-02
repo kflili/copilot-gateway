@@ -126,7 +126,25 @@ if (-not $SkipDeps) {
     if (-not (Test-Path $venvPython)) {
         Write-Error "Expected venv interpreter at $venvPython but file is missing."
     }
-    $python = Get-Command $venvPython
+    $venvCmd = Get-Command $venvPython
+    # Even an existing-and-non-empty `.venv\Scripts\python.exe` can be
+    # broken: zero-byte stub from an interrupted copy, dangling reference
+    # to a base Python that's since been uninstalled/upgraded, missing
+    # site-packages, etc. Probe it the same way we probe the bootstrap
+    # interpreter — rebuild if it doesn't pass the --version smoke.
+    if (-not (Test-PythonCandidate $venvCmd)) {
+        Write-Host "venv at .venv\ exists but isn't a usable Python — recreating…"
+        Remove-Item -Recurse -Force $venvDir -ErrorAction SilentlyContinue
+        Invoke-Checked 'python -m venv .venv' $python -m venv $venvDir
+        if (-not (Test-Path $venvPython)) {
+            Write-Error "Failed to provision venv at $venvDir."
+        }
+        $venvCmd = Get-Command $venvPython
+        if (-not (Test-PythonCandidate $venvCmd)) {
+            Write-Error "Rebuilt venv interpreter at $venvPython is still not usable. Check base Python install."
+        }
+    }
+    $python = $venvCmd
     Write-Host "Using venv python: $($python.Path)"
 
     Write-Host "Installing build + runtime deps…"
@@ -141,12 +159,19 @@ if (-not $SkipDeps) {
     Invoke-Checked 'pip install (build + runtime deps)' $python -m pip install pyinstaller pystray pillow zstandard
 } else {
     # -SkipDeps assumes the venv (or whatever python the user supplied) is
-    # already set up; reuse it if present so PyInstaller runs under the same
-    # interpreter as a normal build.
+    # already set up; reuse it if present AND usable. A bare Test-Path was
+    # insufficient — a zero-byte stub or broken interpreter from an
+    # interrupted prior run would pass it. Test-PythonCandidate runs the
+    # candidate's --version to verify it's actually a working Python.
     $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
     if (Test-Path $venvPython) {
-        $python = Get-Command $venvPython
-        Write-Host "Reusing venv python: $($python.Path)"
+        $venvCmd = Get-Command $venvPython
+        if (Test-PythonCandidate $venvCmd) {
+            $python = $venvCmd
+            Write-Host "Reusing venv python: $($python.Path)"
+        } else {
+            Write-Error "Venv at .venv\ is broken (interpreter at $venvPython does not respond to --version). Re-run without -SkipDeps to rebuild."
+        }
     }
 }
 
