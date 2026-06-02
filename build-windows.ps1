@@ -25,17 +25,41 @@ $ErrorActionPreference = 'Stop'
 # …). Wrap every native invocation in this helper so a failed pip / build
 # stops the script instead of falling through to a "successful" Test-Path on
 # a stale dist\copilot-gateway.exe from a prior run.
+#
+# Intentionally a SIMPLE function — no [CmdletBinding] / [Parameter]
+# attributes. Advanced functions strictly validate args, so hyphen-prefixed
+# tokens like `-m`, `--version`, `--upgrade` would error out as unknown
+# parameter names before the call ever reaches the native command. Simple
+# functions instead collect every unbound arg in the automatic `$args`
+# variable, which is exactly what we want for forwarding to `&`.
 function Invoke-Checked {
-    [CmdletBinding()]
     param(
-        [Parameter(Mandatory, Position=0)][string]$Description,
-        [Parameter(Mandatory, Position=1)]$Command,
-        [Parameter(ValueFromRemainingArguments=$true)][string[]]$CommandArgs
+        [string]$Description,
+        $Command
     )
-    & $Command @CommandArgs
+    & $Command $args
     if ($LASTEXITCODE -ne 0) {
         Write-Error "$Description failed (exit code $LASTEXITCODE)"
     }
+}
+
+# Probe a candidate Python CommandInfo to confirm it's a usable interpreter.
+# Catches two Windows-specific traps:
+#   1. The Microsoft Store app-execution alias for `python` / `python3` lives
+#      at `…\WindowsApps\python.exe` as a 0-byte stub — invoking it pops the
+#      Store install prompt instead of running Python.
+#   2. An ancient Python on PATH (e.g., 2.7) that `tray_app.py`'s PEP 604
+#      unions wouldn't parse.
+# Returns $true iff `& $Command --version` exits 0 and reports Python 3.x.
+function Test-PythonCandidate {
+    param($Command)
+    if (-not $Command) { return $false }
+    try {
+        if ((Get-Item -LiteralPath $Command.Path -ErrorAction Stop).Length -eq 0) { return $false }
+    } catch { return $false }
+    $output = & $Command.Path --version 2>&1
+    if ($LASTEXITCODE -ne 0) { return $false }
+    return ([string]$output -match '^Python\s+3\.')
 }
 
 # Repo root = directory of this script. cd here so relative paths in the
@@ -49,18 +73,18 @@ Set-Location $RepoRoot
 # PowerShell 5.1 inbox, so use the 5.1-compatible `if` fallback instead.
 # Resolution order: python → python3 → py (the Windows Python Launcher,
 # bundled with python.org installers; often the only Python on PATH).
-# `Select-Object -First 1` is defensive: single-name `Get-Command` returns
-# the resolved command, but the explicit slice future-proofs if `-All`
-# semantics ever change.
-$python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $python) {
-    $python = Get-Command python3 -ErrorAction SilentlyContinue | Select-Object -First 1
+# Each candidate is probed via Test-PythonCandidate so the MS Store alias
+# stub and pre-3.x interpreters are skipped silently, not accepted.
+$python = $null
+foreach ($name in @('python', 'python3', 'py')) {
+    $candidate = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (Test-PythonCandidate $candidate) {
+        $python = $candidate
+        break
+    }
 }
 if (-not $python) {
-    $python = Get-Command py -ErrorAction SilentlyContinue | Select-Object -First 1
-}
-if (-not $python) {
-    Write-Error "Python not found on PATH. Install Python 3.10+ from python.org and retry."
+    Write-Error "No usable Python 3.x found on PATH (tried python, python3, py — Microsoft Store alias and 0-byte stubs are skipped). Install Python 3.10+ from python.org and retry."
 }
 # Use `.Path` for printing (always populated on ApplicationInfo across PS
 # 5.1 + 7), and invoke `$python` directly via the call operator `&` (which
