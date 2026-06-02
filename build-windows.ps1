@@ -77,7 +77,12 @@ Set-Location $RepoRoot
 # stub and pre-3.x interpreters are skipped silently, not accepted.
 $python = $null
 foreach ($name in @('python', 'python3', 'py')) {
-    $candidate = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+    # `-CommandType Application` restricts the lookup to executables only,
+    # so a user-defined `python` alias or function in the PS profile can't
+    # shadow the real interpreter. Test-PythonCandidate would catch most
+    # impostors via its --version probe anyway, but the CommandType filter
+    # is the cheaper first-line defense.
+    $candidate = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (Test-PythonCandidate $candidate) {
         $python = $candidate
         break
@@ -109,11 +114,15 @@ if (-not $SkipDeps) {
     # Pythons). Create `.venv` next to the script and rebind `$python` to its
     # interpreter for the remainder of the build.
     $venvDir = Join-Path $RepoRoot '.venv'
-    if (-not (Test-Path $venvDir)) {
+    $venvPython = Join-Path $venvDir 'Scripts\python.exe'
+    # Probe the interpreter itself, not just the directory — a corrupt or
+    # empty `.venv\` from an interrupted previous `python -m venv` would
+    # pass a bare `Test-Path $venvDir` but then fail at `Get-Command
+    # $venvPython` with a confusing "command not found" downstream.
+    if (-not (Test-Path $venvPython)) {
         Write-Host "Creating virtual environment at .venv\…"
         Invoke-Checked 'python -m venv .venv' $python -m venv $venvDir
     }
-    $venvPython = Join-Path $venvDir 'Scripts\python.exe'
     if (-not (Test-Path $venvPython)) {
         Write-Error "Expected venv interpreter at $venvPython but file is missing."
     }
