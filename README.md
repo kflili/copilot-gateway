@@ -349,7 +349,39 @@ The demo UI at `localhost:8788` provides:
 
 The demo calls the Copilot API directly (not through the gateway) so it can switch modes per-request.
 
-## Windows tray app
+## Windows
+
+Two ways to run on Windows: a packaged single-`.exe` (recommended for end
+users) or directly from source (recommended for development).
+
+### Option A — packaged `.exe` (recommended)
+
+Build once, distribute the resulting `.exe` to any Windows host. Requires
+Python 3.10+ and PowerShell:
+
+```powershell
+.\build-windows.ps1
+.\dist\copilot-gateway.exe
+```
+
+The script installs PyInstaller + `pystray` + `pillow`, then invokes
+`pyinstaller pyinstaller.spec` to produce `dist\copilot-gateway.exe` —
+a single-file bundle of `tray_app.py` (entry), `gateway.py`, `demo.py`, and
+`demo.html`. No Python install needed on the target machine.
+
+Flags: `-SkipDeps` skips `pip install` if deps are already present;
+`-Clean` removes `.\build\` and `.\dist\` before building.
+
+**Known limitation (v1)**: `tray_app.py` spawns `gateway.py` via
+`subprocess.Popen([sys.executable, ...])`, which in a frozen onefile build
+resolves `sys.executable` to the bootloader `.exe` (not a Python interpreter).
+The tray UI launches, but the gateway subprocess will not start until a
+follow-up PR teaches `tray_app.py` to detect `getattr(sys, 'frozen', False)`
+and either re-spawn with a sub-command sentinel or run gateway in-process.
+Until then, use **Option B** below for a working setup. Tracked in
+`docs/design/windows-app/plan.md` § Out of Scope.
+
+### Option B — from source
 
 `tray_app.py` is a Windows-targeted system-tray UI that mirrors the macOS
 `menubar.swift` feature surface and adds two toggles unique to this platform:
@@ -376,12 +408,17 @@ launch with `python tray_app.py --host 0.0.0.0` and accept the
 LAN-exposure posture shown in the Stats popup. The Enable-for-WSL toggle
 writes env into the chosen distro but does NOT re-bind the running
 gateway at runtime — that's deferred (see
-`docs/design/windows-app/plan.md` §"Out of Scope").
+`docs/design/windows-app/plan.md` § Out of Scope).
 
 Mac dev box: full tray rendering targets Windows; on macOS, run
 `python3 tray_app.py --smoke` to exercise the platform / dependency probes
-without entering the pystray run loop. Packaging into a single `.exe` lands in
-Item 5 (a follow-up Windows section will cover PyInstaller).
+without entering the pystray run loop.
+
+### Build artifacts
+
+`build-windows.ps1` and `pyinstaller.spec` live at the repo root.
+PyInstaller drops the executable in `dist\copilot-gateway.exe` and
+intermediate work in `build\`. Both directories are gitignored.
 
 ## Files
 

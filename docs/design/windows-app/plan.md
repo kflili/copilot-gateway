@@ -443,3 +443,32 @@ later, it gets its own plan under `docs/design/`.
   - When-it-should-be-done: when toggle-driven rebind becomes a friction
     point in practice. `tray_app.py:select_bind_host()` already returns the
     target host given a toggle state, so wiring is straightforward.
+- **Frozen-mode gateway spawn in packaged `.exe`** — `tray_app.py:197`
+  spawns the gateway via `subprocess.Popen([sys.executable, str(GATEWAY_PY),
+  ...])`. In a PyInstaller `--onefile` build `sys.executable` resolves to the
+  bootloader `.exe` (not a Python interpreter), so the spawn call cannot
+  re-execute `gateway.py` as a script. The Item 5 packaging (`pyinstaller.spec`
+  + `build-windows.ps1`) bundles all required files into a single `.exe` and
+  the tray UI launches, but the embedded gateway subprocess will not start
+  until `tray_app.py` is taught to handle frozen mode. Fix shape: detect
+  `getattr(sys, 'frozen', False)` near `GatewayProcess.start()` and either
+  (a) re-spawn the same `.exe` with a `--mode gateway` sentinel that
+  short-circuits to `gateway.main()` instead of starting the tray, or
+  (b) import `gateway` as a module and run its main loop in a worker thread
+  (drops process isolation but eliminates the spawn round-trip).
+  - Destination: a follow-up PR against `tray_app.py` (new entry in
+    `docs/design/windows-app/plan.md` § Key Decisions, or a small standalone
+    plan if option (a) requires gateway argv-handling changes).
+  - When-it-should-be-done: before the `.exe` is recommended over the
+    Option-B from-source flow in README. Currently README documents the
+    limitation and points users to Option B for a working setup.
+- **Full Windows `.exe` build + smoke** — Item 5's dev-machine validation is
+  PyInstaller spec-parse on macOS (which produces a Mach-O binary, not a
+  Windows PE). End-to-end smoke (build the spec on Windows, launch the
+  resulting `.exe`, verify the tray icon appears and menu callbacks work)
+  requires a Windows host and is deferred.
+  - Destination: a follow-up issue or PR after the frozen-mode spawn fix
+    above lands; smoke covers both the build artifact and the runtime tray.
+  - When-it-should-be-done: once a Windows test host is available, ideally
+    paired with the frozen-mode spawn fix so the smoke validates a working
+    end-to-end UX rather than the known-broken-spawn intermediate state.
