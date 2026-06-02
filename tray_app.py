@@ -199,14 +199,20 @@ class GatewayProcess:
     def stop(self):
         if self.attached or self.proc is None:
             return
-        # Kill the process group / job so gateway.py's child demo.py also
-        # terminates (codex finding tray_app.py:185 — demo orphaned before).
+        # Kill the process tree so gateway.py's child demo.py also terminates.
+        # On Windows we use `taskkill /F /T /PID` rather than
+        # CTRL_BREAK_EVENT — the latter requires an attached console, which
+        # the packaged --noconsole tray doesn't have, so the signal silently
+        # no-ops (codex P2 finding on packaged Windows builds). On POSIX we
+        # signal the process group we created via start_new_session=True.
         try:
             if sys.platform == "win32":
-                self.proc.send_signal(signal.CTRL_BREAK_EVENT)
+                _quiet_run(["taskkill", "/F", "/T", "/PID", str(self.proc.pid)],
+                           timeout=5)
             else:
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
-        except (OSError, ProcessLookupError, ValueError):
+        except (OSError, ProcessLookupError, ValueError,
+                subprocess.TimeoutExpired):
             pass
         try:
             try:
