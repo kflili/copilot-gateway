@@ -319,11 +319,11 @@ rm -rf logs/2026-04-01/                  # delete a specific day
 
 ## What `python3 gateway.py` Launches
 
-A single command starts three processes:
+A single command starts up to three processes:
 
 1. **Gateway** on `:8787` — the LLM API proxy
 2. **Demo UI** on `:8788` — chat + call flow visualization
-3. **⚡️CG menu bar** — macOS status bar indicator
+3. **⚡️CG menu bar** — macOS status bar indicator (skipped if one is already drawing the icon — either a standalone `menubar` from a previous gateway or the bundled `CopilotGateway.app`, which has its own menu-bar UI)
 
 The ⚡️CG menu bar shows:
 - **⚡️CG 42↗ 170K** — live request count and total tokens (updates every 30s)
@@ -335,7 +335,7 @@ The ⚡️CG menu bar shows:
 - **Copy Claude Code Command** — copies the `cgcc` env vars to clipboard
 - **Stop Gateway & Quit** — kills gateway, demo, and menu bar in one click
 
-All three are killed together via Ctrl+C or the menu bar stop option.
+**Ctrl+C** terminates the gateway, demo, and any menu bar this gateway spawned. An adopted menu bar (standalone `menubar` or `CopilotGateway.app`) keeps running on the Ctrl+C path — `gateway.py` has no PID handle to it. The **Stop Gateway & Quit** menu option kills the gateway and demo processes *and* quits the menu-bar process itself, so the menu-driven shutdown fully cleans up either way.
 
 ## Demo App
 
