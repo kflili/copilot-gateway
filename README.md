@@ -335,7 +335,7 @@ The ⚡️CG menu bar shows:
 - **Copy Claude Code Command** — copies the `cgcc` env vars to clipboard
 - **Stop Gateway & Quit** — kills gateway, demo, and menu bar in one click
 
-**Ctrl+C** terminates the gateway, demo, and any menu bar this gateway spawned. An adopted menu bar (standalone `menubar` or `CopilotGateway.app`) keeps running on the Ctrl+C path — `gateway.py` has no PID handle to it. The **Stop Gateway & Quit** menu option kills the gateway/demo ports *and* quits the menu-bar process itself, so the menu-driven shutdown fully cleans up either way.
+**Ctrl+C** terminates the gateway, demo, and any menu bar this gateway spawned. An adopted menu bar (standalone `menubar` or `CopilotGateway.app`) keeps running on the Ctrl+C path — `gateway.py` has no PID handle to it. The **Stop Gateway & Quit** menu option kills the gateway and demo processes *and* quits the menu-bar process itself, so the menu-driven shutdown fully cleans up either way.
 
 ## Demo App
 
