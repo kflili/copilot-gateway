@@ -345,6 +345,7 @@ The demo UI at `localhost:8788` provides:
 - **Mode toggle**: VS Code / CLI switch — shows different model lists, API URLs, token types
 - **Draggable split**: Resize panes by dragging the border
 - **Info bar**: Shows API URL, token type, integration ID, model count for current mode
+- **Gateway panel** (collapsible, top strip): per-host (Windows | WSL | Total) stats table — requests, tokens in/out, top model, last request — plus a live `/logs` tail with `[WIN]` (blue) / `[WSL]` (green) / `[OTHER]` (gray) prefixes. Polls the gateway every 3s via `/api/gateway/stats` + `/api/gateway/logs`.
 
 The demo calls the Copilot API directly (not through the gateway) so it can switch modes per-request.
 

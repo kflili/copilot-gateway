@@ -10,6 +10,7 @@
     --border: #30363d; --text: #e6edf3; --text2: #8b949e;
     --accent: #58a6ff; --green: #3fb950; --orange: #d29922;
     --red: #f85149; --purple: #bc8cff;
+    --win-color: #58a6ff; --wsl-color: #3fb950; --other-color: #8b949e;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, 'SF Mono', Menlo, monospace; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; font-size: 13px; }
@@ -33,6 +34,43 @@
   .mode-info-bar .mib-label { color: var(--text2); font-weight: 600; text-transform: uppercase; font-size: 9px; letter-spacing: 0.5px; }
   .mode-info-bar .mib-url { color: var(--green); font-family: 'SF Mono', Menlo, monospace; padding: 2px 8px; background: rgba(63,185,80,0.1); border-radius: 3px; margin-right: 12px; }
   .mode-info-bar .mib-value { color: var(--text); margin-right: 12px; }
+
+  /* ── Gateway Panel (per-host stats + color-coded log) ── */
+  .gateway-panel { display: flex; flex-direction: column; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; max-height: 320px; }
+  .gateway-panel.collapsed .gp-body { display: none; }
+  .gateway-panel.collapsed { max-height: none; }
+  .gp-header { display: flex; align-items: center; gap: 12px; padding: 6px 16px; background: var(--bg3); border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
+  .gateway-panel.collapsed .gp-header { border-bottom: none; }
+  .gp-header h2 { font-size: 12px; font-weight: 600; color: var(--purple); }
+  .gp-header .gp-chevron { color: var(--text2); font-size: 10px; transition: transform 0.15s; }
+  .gateway-panel.collapsed .gp-chevron { transform: rotate(-90deg); }
+  .gp-header .gp-state { margin-left: auto; font-size: 10px; color: var(--text2); font-family: 'SF Mono', Menlo, monospace; }
+  .gp-header .gp-state.err { color: var(--red); }
+  .gp-body { display: flex; flex: 1; min-height: 0; }
+  .gp-stats { flex: 0 0 auto; padding: 10px 16px; border-right: 1px solid var(--border); overflow-y: auto; }
+  .gp-stats table { border-collapse: collapse; font-size: 11px; }
+  .gp-stats th, .gp-stats td { padding: 4px 12px; text-align: right; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .gp-stats th { color: var(--text2); font-weight: 600; text-transform: uppercase; font-size: 9px; letter-spacing: 0.5px; }
+  .gp-stats th:first-child, .gp-stats td:first-child { text-align: left; color: var(--text2); }
+  .gp-stats th.col-win { color: var(--win-color); }
+  .gp-stats th.col-wsl { color: var(--wsl-color); }
+  .gp-stats th.col-total { color: var(--text); }
+  .gp-stats td.cell-num { color: var(--text); }
+  .gp-stats td.cell-na { color: var(--text2); }
+  .gp-logs { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .gp-logs-header { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--border); }
+  .gp-logs-header span { font-size: 10px; color: var(--text2); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px; }
+  .gp-logs-header .gp-legend { margin-left: auto; display: flex; gap: 10px; font-size: 10px; text-transform: none; letter-spacing: 0; }
+  .gp-logs-header .gp-legend .lg-win { color: var(--win-color); }
+  .gp-logs-header .gp-legend .lg-wsl { color: var(--wsl-color); }
+  .gp-logs-header .gp-legend .lg-other { color: var(--other-color); }
+  .gp-log-stream { flex: 1; overflow-y: auto; padding: 6px 12px; font-family: 'SF Mono', Menlo, monospace; font-size: 11px; line-height: 1.45; }
+  .gp-log-line { white-space: pre-wrap; word-break: break-all; }
+  .gp-log-line .gp-prefix { display: inline-block; min-width: 60px; font-weight: 700; margin-right: 6px; }
+  .gp-log-line.win-line .gp-prefix { color: var(--win-color); }
+  .gp-log-line.wsl-line .gp-prefix { color: var(--wsl-color); }
+  .gp-log-line.other-line .gp-prefix { color: var(--other-color); }
+  .gp-log-line.no-origin { color: var(--text2); }
 
   /* ── Main layout ── */
   .main { display: flex; flex: 1; overflow: hidden; }
@@ -116,6 +154,47 @@
   <span class="mib-value" id="mib-header">-</span>
   <span class="mib-label">Models</span>
   <span class="mib-value" id="mib-count">-</span>
+</div>
+
+<!-- Gateway Panel: per-host stats + color-coded live log -->
+<div class="gateway-panel" id="gateway-panel">
+  <div class="gp-header" onclick="toggleGatewayPanel()">
+    <span class="gp-chevron">▼</span>
+    <h2>Gateway — per-host traffic</h2>
+    <span class="gp-state" id="gp-state">waiting for /stats…</span>
+  </div>
+  <div class="gp-body">
+    <div class="gp-stats">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th class="col-win">Windows</th>
+            <th class="col-wsl">WSL</th>
+            <th class="col-total">Total</th>
+          </tr>
+        </thead>
+        <tbody id="gp-stats-body">
+          <tr><td>Requests</td><td class="cell-na" data-row="requests" data-col="windows">—</td><td class="cell-na" data-row="requests" data-col="wsl">—</td><td class="cell-na" data-row="requests" data-col="total">—</td></tr>
+          <tr><td>Tokens in</td><td class="cell-na" data-row="input_tokens" data-col="windows">—</td><td class="cell-na" data-row="input_tokens" data-col="wsl">—</td><td class="cell-na" data-row="input_tokens" data-col="total">—</td></tr>
+          <tr><td>Tokens out</td><td class="cell-na" data-row="output_tokens" data-col="windows">—</td><td class="cell-na" data-row="output_tokens" data-col="wsl">—</td><td class="cell-na" data-row="output_tokens" data-col="total">—</td></tr>
+          <tr><td>Top model (recent)</td><td class="cell-na" data-row="top_model" data-col="windows">—</td><td class="cell-na" data-row="top_model" data-col="wsl">—</td><td class="cell-na" data-row="top_model" data-col="total">—</td></tr>
+          <tr><td>Last request</td><td class="cell-na" data-row="last_request_at" data-col="windows">—</td><td class="cell-na" data-row="last_request_at" data-col="wsl">—</td><td class="cell-na" data-row="last_request_at" data-col="total">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="gp-logs">
+      <div class="gp-logs-header">
+        <span>Live gateway log</span>
+        <div class="gp-legend">
+          <span class="lg-win">■ [WIN]</span>
+          <span class="lg-wsl">■ [WSL]</span>
+          <span class="lg-other">■ [OTHER]</span>
+        </div>
+      </div>
+      <div class="gp-log-stream" id="gp-log-stream"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Main -->
@@ -480,9 +559,182 @@ inputEl.addEventListener('input', () => {
   });
 }
 
+// ─── Gateway panel: per-host stats + color-coded log ─────────────────────────
+const GATEWAY_POLL_MS = 3000;
+const GATEWAY_LOG_LINES = 200;
+
+function toggleGatewayPanel() {
+  $('gateway-panel').classList.toggle('collapsed');
+}
+
+function fmtNum(n) {
+  if (n == null || n === 0) return '0';
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 2 : 1) + 'K';
+  return (n / 1_000_000).toFixed(2) + 'M';
+}
+
+function fmtTs(iso) {
+  if (!iso) return '—';
+  // gateway emits "YYYY-MM-DDTHH:MM:SSZ" — show HH:MM:SS UTC
+  const m = /T(\d{2}:\d{2}:\d{2})/.exec(iso);
+  return m ? m[1] + 'Z' : iso;
+}
+
+function setStatsCell(row, col, value, isNum) {
+  const sel = `[data-row="${row}"][data-col="${col}"]`;
+  const el = document.querySelector(`#gp-stats-body ${sel}`);
+  if (!el) return;
+  if (value == null || value === '' || (isNum && value === 0)) {
+    el.textContent = value === 0 ? '0' : '—';
+    el.className = value === 0 ? 'cell-num' : 'cell-na';
+  } else {
+    el.textContent = value;
+    el.className = 'cell-num';
+  }
+}
+
+// Track top model per origin from log lines we've seen (rolling).
+const modelCountsByOrigin = { windows: {}, wsl: {}, other: {} };
+
+function topModelFor(origin) {
+  const counts = modelCountsByOrigin[origin] || {};
+  let best = null, bestN = 0;
+  for (const [m, n] of Object.entries(counts)) {
+    if (n > bestN) { best = m; bestN = n; }
+  }
+  return best;
+}
+
+function renderStats(snapshot) {
+  const po = snapshot.per_origin || {};
+  const win = po.windows || {};
+  const wsl = po.wsl || {};
+  const other = po.other || {};
+
+  const totalReq = (win.requests || 0) + (wsl.requests || 0) + (other.requests || 0);
+  const totalIn = (win.input_tokens || 0) + (wsl.input_tokens || 0) + (other.input_tokens || 0);
+  const totalOut = (win.output_tokens || 0) + (wsl.output_tokens || 0) + (other.output_tokens || 0);
+
+  setStatsCell('requests', 'windows', win.requests || 0, true);
+  setStatsCell('requests', 'wsl', wsl.requests || 0, true);
+  setStatsCell('requests', 'total', totalReq, true);
+
+  setStatsCell('input_tokens', 'windows', fmtNum(win.input_tokens || 0), false);
+  setStatsCell('input_tokens', 'wsl', fmtNum(wsl.input_tokens || 0), false);
+  setStatsCell('input_tokens', 'total', fmtNum(totalIn), false);
+
+  setStatsCell('output_tokens', 'windows', fmtNum(win.output_tokens || 0), false);
+  setStatsCell('output_tokens', 'wsl', fmtNum(wsl.output_tokens || 0), false);
+  setStatsCell('output_tokens', 'total', fmtNum(totalOut), false);
+
+  setStatsCell('top_model', 'windows', topModelFor('windows'), false);
+  setStatsCell('top_model', 'wsl', topModelFor('wsl'), false);
+  // Total = overall top model from snapshot.models
+  const models = snapshot.models || {};
+  let bestModel = null, bestReq = 0;
+  for (const [name, info] of Object.entries(models)) {
+    const r = (info && info.requests) || 0;
+    if (r > bestReq) { bestModel = name; bestReq = r; }
+  }
+  setStatsCell('top_model', 'total', bestModel, false);
+
+  setStatsCell('last_request_at', 'windows', fmtTs(win.last_request_at), false);
+  setStatsCell('last_request_at', 'wsl', fmtTs(wsl.last_request_at), false);
+  setStatsCell('last_request_at', 'total', fmtTs(snapshot.last_request_at), false);
+}
+
+function classifyLogLine(line) {
+  // Match `origin=<value>` substring populated by gateway.py per Item 2.
+  const m = /\borigin=(windows|wsl|other)\b/.exec(line);
+  if (!m) return { origin: null, prefix: null, cls: 'no-origin' };
+  const o = m[1];
+  if (o === 'windows') return { origin: 'windows', prefix: '[WIN]', cls: 'win-line' };
+  if (o === 'wsl') return { origin: 'wsl', prefix: '[WSL]', cls: 'wsl-line' };
+  return { origin: 'other', prefix: '[OTHER]', cls: 'other-line' };
+}
+
+function updateModelCountsFromLine(line, origin) {
+  if (!origin) return;
+  const m = /\bmodel=([\w.\-/:]+)/.exec(line);
+  if (!m) return;
+  const model = m[1].replace(/,$/, '');
+  if (model === 'unknown') return; // gateway logs model=unknown when request body has no model field
+  modelCountsByOrigin[origin][model] = (modelCountsByOrigin[origin][model] || 0) + 1;
+}
+
+let lastLogHash = '';
+function renderLogStream(text) {
+  // Cheap dedup — skip render if log tail unchanged.
+  const tail = text.slice(-2000);
+  if (tail === lastLogHash) return;
+  lastLogHash = tail;
+
+  // Reset model counts so they reflect only the current window.
+  for (const k of Object.keys(modelCountsByOrigin)) modelCountsByOrigin[k] = {};
+
+  const stream = $('gp-log-stream');
+  stream.innerHTML = '';
+  const lines = text.split('\n').slice(-GATEWAY_LOG_LINES);
+  const wasAtBottom = stream.scrollTop + stream.clientHeight >= stream.scrollHeight - 10;
+
+  for (const line of lines) {
+    if (!line) continue;
+    const { origin, prefix, cls } = classifyLogLine(line);
+    updateModelCountsFromLine(line, origin);
+    const div = document.createElement('div');
+    div.className = `gp-log-line ${cls}`;
+    if (prefix) {
+      const span = document.createElement('span');
+      span.className = 'gp-prefix';
+      span.textContent = prefix;
+      div.appendChild(span);
+      div.appendChild(document.createTextNode(line));
+    } else {
+      div.textContent = line;
+    }
+    stream.appendChild(div);
+  }
+  if (wasAtBottom) stream.scrollTop = stream.scrollHeight;
+}
+
+async function pollGatewayOnce() {
+  const stateEl = $('gp-state');
+  try {
+    const [statsResp, logsResp] = await Promise.all([
+      fetch('/api/gateway/stats'),
+      fetch(`/api/gateway/logs?n=${GATEWAY_LOG_LINES}`),
+    ]);
+    if (!statsResp.ok) throw new Error(`/stats ${statsResp.status}`);
+    if (!logsResp.ok) throw new Error(`/logs ${logsResp.status}`);
+    const statsText = await statsResp.text();
+    const logsText = await logsResp.text();
+    // Parse logs first so top-model lookups during renderStats see fresh counts.
+    renderLogStream(logsText);
+    let snapshot;
+    try { snapshot = JSON.parse(statsText); } catch { snapshot = {}; }
+    renderStats(snapshot);
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    stateEl.textContent = `last poll ${hh}:${mm}:${ss}`;
+    stateEl.classList.remove('err');
+  } catch (e) {
+    stateEl.textContent = `gateway unreachable: ${e.message}`;
+    stateEl.classList.add('err');
+  }
+}
+
+async function startGatewayPoller() {
+  await pollGatewayOnce();
+  setTimeout(startGatewayPoller, GATEWAY_POLL_MS);
+}
+
 // ─── Init ────────────────────────────────────────────────────────────────────
 loadModels();
 connectEvents();
+startGatewayPoller();
 inputEl.focus();
 </script>
 </body>
