@@ -144,16 +144,16 @@ class GatewayProcess:
 
     def already_running(self) -> bool:
         """True iff /health returns 200 with a JSON body shaped like the
-        gateway's health response (must contain 'version' or 'status' keys).
-        Narrower than "port is bound": a 404 from an unrelated HTTP service
-        on the port shouldn't make us attach (codex P2). The port-conflict
-        case is now handled by _port_available's pre-spawn probe; we no
-        longer need the HTTPError → True hack."""
+        gateway's health response (must contain BOTH 'version' and 'status'
+        keys — generic services exposing just {"status": "ok"} no longer
+        false-attach). Narrower than "port is bound": a 404 from an unrelated
+        HTTP service on the port shouldn't make us attach (codex P2). The
+        port-conflict case is handled by _port_available's pre-spawn probe."""
         try:
             with urllib.request.urlopen(self.health_url, timeout=HTTP_TIMEOUT_S) as resp:
                 body = json.loads(resp.read().decode())
-                return isinstance(body, dict) and (
-                    "version" in body or "status" in body)
+                return (isinstance(body, dict)
+                        and "version" in body and "status" in body)
         except (urllib.error.URLError, socket.timeout, ConnectionError,
                 json.JSONDecodeError, OSError):
             return False
@@ -996,8 +996,14 @@ class TrayUI:
 
     def _show_stats(self):
         snap = self.latest_snap
-        lines = [f"Bind: {self.gateway.host}:{self.gateway.port}  "
-                 f"[{self.bind_posture.upper()}]", ""]
+        if self.bind_posture == "attached":
+            header = (f"Bind: attached to gateway at {self.gateway.host}:"
+                      f"{self.gateway.port} (its actual --host is unknown — "
+                      f"check the gateway's own startup log)")
+        else:
+            header = (f"Bind: {self.gateway.host}:{self.gateway.port}  "
+                      f"[{self.bind_posture.upper()}]")
+        lines = [header, ""]
         if snap is None:
             lines.append("(gateway not reachable — start it or check /health)")
         else:
@@ -1293,6 +1299,12 @@ def main(argv: list[str] | None = None) -> int:
               f"Stop the other gateway / process first, or pass --port to "
               f"choose another.", file=sys.stderr)
         return 4
+    # When we attached to an externally-started gateway, we DON'T know what
+    # --host it was started with — the user might have it on 0.0.0.0 but the
+    # tray was launched with default 127.0.0.1. Mark posture as "attached"
+    # so the Stats popup tells the truth instead of claiming "loopback".
+    if status == "attached":
+        bind_posture = "attached"
 
     # base_url is what we hand to clients (Copy claude / Copy codex). When
     # binding to a non-loopback IP, clients on this Windows box still reach
