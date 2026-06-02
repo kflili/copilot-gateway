@@ -1210,7 +1210,7 @@ def main():
 
         standalone_pid = _first_pid(["pgrep", "-x", "menubar"])
         app_pid = _first_pid(
-            ["pgrep", "-f", "CopilotGateway.app/Contents/MacOS/CopilotGateway"]
+            ["pgrep", "-f", r"CopilotGateway\.app/Contents/MacOS/CopilotGateway"]
         )
         if standalone_pid:
             log(f"menu bar indicator already running (PID {standalone_pid}) — skip launch")
