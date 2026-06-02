@@ -87,6 +87,21 @@ def _decode_wsl_output(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _is_loopback(host: str | None) -> bool:
+    """True iff `host` is a loopback address (127.0.0.0/8, ::1) or the name
+    "localhost". Used by enable_for_wsl to refuse silently-broken configs
+    when the gateway can't be reached from a non-mirrored WSL distro."""
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        import ipaddress
+        return ipaddress.ip_address(host).is_loopback
+    except (ValueError, ImportError):
+        return False
+
+
 def _port_available(host: str, port: int) -> bool:
     """Probe-bind to (host, port) — true if available, false if something
     else holds it. Used to surface port-conflicts BEFORE spawning gateway.py
@@ -656,13 +671,13 @@ def enable_for_wsl(distro: str, port: int,
     if shutil.which("wsl.exe") is None:
         return (False, "wsl.exe not on PATH — Enable-for-WSL only runs on "
                        "Windows hosts with WSL installed.")
-    if gateway_host in ("127.0.0.1", "localhost") and not wsl_mirrored_mode():
-        return (False, "Gateway is bound to 127.0.0.1 (loopback only). WSL "
-                       "distros can't reach loopback unless WSL2 is in "
-                       "mirrored networking mode. Restart the tray with "
-                       "`python tray_app.py --host 0.0.0.0` (accepts the "
-                       "LAN-exposed posture in Stats popup), or enable "
-                       "mirrored mode in %USERPROFILE%\\.wslconfig.")
+    if _is_loopback(gateway_host) and not wsl_mirrored_mode():
+        return (False, "Gateway is bound to a loopback address "
+                       f"({gateway_host}). WSL distros can't reach loopback "
+                       "unless WSL2 is in mirrored networking mode. Restart "
+                       "the tray with `python tray_app.py --host 0.0.0.0` "
+                       "(accepts the LAN-exposed posture in Stats popup), or "
+                       "enable mirrored mode in %USERPROFILE%\\.wslconfig.")
     shell_name, rc_path = _wsl_detect_shell(distro)
     wsl_userprofile = _wsl_resolve_userprofile(distro)
     block = _wsl_rc_block(port, shell=shell_name,
