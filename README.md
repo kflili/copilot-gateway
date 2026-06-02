@@ -335,7 +335,7 @@ The ⚡️CG menu bar shows:
 - **Copy Claude Code Command** — copies the `cgcc` env vars to clipboard
 - **Stop Gateway & Quit** — kills gateway, demo, and menu bar in one click
 
-All three are killed together via Ctrl+C or the menu bar stop option.
+Ctrl+C or the **Stop Gateway & Quit** menu option terminates the gateway, demo, and any menu bar this gateway spawned. An adopted menu bar (standalone `menubar` or `CopilotGateway.app`) keeps running — whoever spawned it owns its lifecycle.
 
 ## Demo App
 
