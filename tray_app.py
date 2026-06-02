@@ -32,6 +32,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -91,12 +92,18 @@ def _port_available(host: str, port: int) -> bool:
     else holds it. Used to surface port-conflicts BEFORE spawning gateway.py
     (which would otherwise die silently with EADDRINUSE on suppressed stderr).
     Uses SO_REUSEADDR off — we want the exact same semantics as gateway.py's
-    HTTPServer. Binds to the explicit `host` (rather than '') so dual-stack
-    Linux/macOS behaviour matches what HTTPServer will see at spawn time."""
+    HTTPServer. Family is auto-resolved so an IPv6 host like `::1` works."""
     bind_host = "0.0.0.0" if host in ("0.0.0.0", "") else host
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        s.bind((bind_host, port))
+        infos = socket.getaddrinfo(bind_host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    family, socktype, proto, _, sockaddr = infos[0]
+    s = socket.socket(family, socktype, proto)
+    try:
+        s.bind(sockaddr)
         return True
     except OSError:
         return False
@@ -136,15 +143,19 @@ class GatewayProcess:
         return "127.0.0.1" if self.host in ("0.0.0.0", "") else self.host
 
     def already_running(self) -> bool:
+        """True iff /health returns 200 with a JSON body shaped like the
+        gateway's health response (must contain 'version' or 'status' keys).
+        Narrower than "port is bound": a 404 from an unrelated HTTP service
+        on the port shouldn't make us attach (codex P2). The port-conflict
+        case is now handled by _port_available's pre-spawn probe; we no
+        longer need the HTTPError → True hack."""
         try:
-            with urllib.request.urlopen(self.health_url, timeout=HTTP_TIMEOUT_S):
-                return True
-        except urllib.error.HTTPError:
-            # An HTTP error (500, 403, etc.) means *something* is bound to this
-            # port and answering — spawning a second gateway would race for the
-            # same socket and OSError. Treat as "running" so we attach instead.
-            return True
-        except (urllib.error.URLError, socket.timeout, ConnectionError):
+            with urllib.request.urlopen(self.health_url, timeout=HTTP_TIMEOUT_S) as resp:
+                body = json.loads(resp.read().decode())
+                return isinstance(body, dict) and (
+                    "version" in body or "status" in body)
+        except (urllib.error.URLError, socket.timeout, ConnectionError,
+                json.JSONDecodeError, OSError):
             return False
 
     def start(self) -> str:
@@ -170,24 +181,46 @@ class GatewayProcess:
             return "port-busy"
         cmd = [sys.executable, str(GATEWAY_PY),
                "--host", self.host, "--port", str(self.port)]
-        self.proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=_CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-        )
+        # New process group so we can kill the gateway AND its children
+        # (gateway.py auto-launches demo.py — codex finding tray_app.py:185).
+        # On Windows that's a job-object via CREATE_NEW_PROCESS_GROUP; on
+        # POSIX it's a fresh session via start_new_session=True.
+        popen_kw = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if sys.platform == "win32":
+            popen_kw["creationflags"] = _CREATE_NO_WINDOW | 0x00000200  # CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kw["start_new_session"] = True
+        self.proc = subprocess.Popen(cmd, **popen_kw)
         return "spawned"
 
     def stop(self):
         if self.attached or self.proc is None:
             return
+        # Kill the process group / job so gateway.py's child demo.py also
+        # terminates (codex finding tray_app.py:185 — demo orphaned before).
         try:
-            self.proc.terminate()
+            if sys.platform == "win32":
+                self.proc.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+        except (OSError, ProcessLookupError, ValueError):
+            pass
+        try:
             try:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                self.proc.kill()
-        except ProcessLookupError:
+                try:
+                    if sys.platform != "win32":
+                        os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
+                    else:
+                        self.proc.kill()
+                except (OSError, ProcessLookupError):
+                    pass
+                self.proc.wait(timeout=2)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
             pass
 
 
@@ -378,8 +411,10 @@ def _setx_user(name: str, value: str) -> tuple[bool, str]:
     except (subprocess.TimeoutExpired, OSError) as e:
         return (False, f"setx invocation failed: {e}")
     if r.returncode != 0:
-        return (False, f"setx returned {r.returncode}: "
-                       f"{r.stderr.decode(errors='replace')[:200]}")
+        # setx often reports the actual error to stdout, not stderr — include
+        # both so the toast surfaces something actionable.
+        out = (r.stdout + b"\n" + r.stderr).decode(errors="replace").strip()
+        return (False, f"setx returned {r.returncode}: {out[:300]}")
     return (True, "")
 
 
@@ -567,9 +602,13 @@ def _wsl_resolve_userprofile(distro: str) -> str | None:
 
 def _wsl_detect_shell(distro: str) -> tuple[str, str]:
     """Return (shell_name, rc_file_path_in_distro) for the chosen distro's
-    user. Falls back to (`sh`, `~/.profile`) when detection fails."""
+    user. Uses `$HOME`-based paths (not `~`) so the rewrite_script can
+    avoid `eval` entirely — `$HOME` is always set in the sh process spawned
+    by `wsl.exe -- sh -c`. Falls back to (`sh`, `$HOME/.profile`) when
+    detection fails."""
+    fallback = ("sh", "$HOME/.profile")
     if shutil.which("wsl.exe") is None:
-        return ("sh", "~/.profile")
+        return fallback
     try:
         r = _quiet_run(
             ["wsl.exe", "-d", distro, "--",
@@ -579,17 +618,17 @@ def _wsl_detect_shell(distro: str) -> tuple[str, str]:
             timeout=5,
         )
     except (subprocess.TimeoutExpired, OSError):
-        return ("sh", "~/.profile")
+        return fallback
     if r.returncode != 0:
-        return ("sh", "~/.profile")
+        return fallback
     line = _decode_wsl_output(r.stdout).strip().splitlines()
     shell_path = line[0].split(":")[-1] if line else ""
     name = shell_path.rsplit("/", 1)[-1] or "sh"
     rc = {
-        "bash":  "~/.bashrc",
-        "zsh":   "~/.zshrc",
-        "fish":  "~/.config/fish/config.fish",
-    }.get(name, "~/.profile")
+        "bash":  "$HOME/.bashrc",
+        "zsh":   "$HOME/.zshrc",
+        "fish":  "$HOME/.config/fish/config.fish",
+    }.get(name, "$HOME/.profile")
     return (name, rc)
 
 
@@ -617,8 +656,7 @@ def enable_for_wsl(distro: str, port: int) -> tuple[bool, str]:
     # `$rc.cg-tmp` may linger but is harmless and self-overwritten next run.
     rewrite_script = f"""
         set -e
-        rc='{rc_path}'
-        eval rc=\"$rc\"
+        rc="{rc_path}"
         mkdir -p "$(dirname "$rc")"
         touch "$rc"
         # Safety pre-check: if the start marker is present but the end marker
@@ -866,6 +904,9 @@ class TrayUI:
 
     def _build_icon(self):
         import pystray
+        # Disable platform-only toggles when their host tooling is absent.
+        win_avail = (sys.platform == "win32") and (shutil.which("setx") is not None)
+        wsl_avail = shutil.which("wsl.exe") is not None
         menu_items = [
             pystray.MenuItem("Stats…", lambda *_: self._marshal(self._show_stats)),
             pystray.MenuItem("View logs…", lambda *_: self._marshal(self._show_logs)),
@@ -876,15 +917,29 @@ class TrayUI:
                              lambda *_: self._marshal(self._copy_codex)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                "Enable for Windows",
+                "Enable for Windows" if win_avail else
+                    "Enable for Windows (setx unavailable)",
                 lambda *_: self._marshal(self._toggle_windows),
                 checked=lambda _: self.win_enabled,
+                enabled=win_avail,
             ),
             pystray.MenuItem("  [Test] Windows",
-                             lambda *_: self._marshal(self._test_windows)),
-            pystray.MenuItem("Enable for WSL", self._wsl_submenu()),
+                             lambda *_: self._marshal(self._test_windows),
+                             enabled=win_avail),
+            pystray.MenuItem(
+                "Enable for WSL" if wsl_avail else
+                    "Enable for WSL (wsl.exe unavailable)",
+                self._wsl_submenu(),
+                enabled=wsl_avail,
+            ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Stop & quit", lambda *_: self._marshal(self.stop)),
+            # "Stop & quit" when we own the gateway subprocess; just "Quit"
+            # when we attached to an externally-started gateway (no subprocess
+            # to stop).
+            pystray.MenuItem(
+                "Stop & quit" if not self.gateway.attached else "Quit",
+                lambda *_: self._marshal(self.stop),
+            ),
         ]
         return pystray.Icon(
             "copilot-gateway",
@@ -1035,12 +1090,13 @@ class TrayUI:
 
     def _clip(self, text: str) -> bool:
         """Returns True on success, False on TclError (clipboard may be
-        temporarily locked by another app — clipboard managers, password
-        managers, RDP, etc.). Caller can adapt the toast accordingly."""
+        temporarily locked by another app). Uses update_idletasks() rather
+        than update() — the latter processes ALL pending events including
+        other tk callbacks, which can recurse into the same code path."""
         try:
             self.root.clipboard_clear()
             self.root.clipboard_append(text)
-            self.root.update()
+            self.root.update_idletasks()
             return True
         except self.tk.TclError:
             return False
@@ -1075,10 +1131,8 @@ class TrayUI:
         def _on_done(ok):
             if ok:
                 self.win_enabled = True
-            try:
-                self.icon.update_menu()
-            except Exception:  # noqa: BLE001
-                pass
+            # No need to call self.icon.update_menu() — `checked=` is a
+            # dynamic lambda that re-evaluates on every menu open.
         self._run_off_main(lambda: enable_for_windows(self.base_url),
                            "Enable for Windows", on_done=_on_done)
 
@@ -1095,10 +1149,7 @@ class TrayUI:
         def _on_done(ok):
             if ok:
                 self.wsl_enabled_distros.add(distro)
-            try:
-                self.icon.update_menu()
-            except Exception:  # noqa: BLE001
-                pass
+            # See _toggle_windows — checkmark lambdas are dynamic.
         self._run_off_main(lambda: enable_for_wsl(distro, self.gateway.port),
                            f"Enable for WSL ({distro})", on_done=_on_done)
 
