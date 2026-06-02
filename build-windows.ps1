@@ -218,5 +218,5 @@ if (Test-Path $exe) {
     Write-Host "Build succeeded: $exe"
     Write-Host "Run it: .\dist\copilot-gateway.exe"
 } else {
-    Write-Error "Build finished but $exe not found. Inspect .\build\copilot-gateway\warn-copilot-gateway.txt for missing modules."
+    Write-Error "Build finished but $exe not found. Inspect .\build\pyinstaller\warn-copilot-gateway.txt for missing modules."
 }
