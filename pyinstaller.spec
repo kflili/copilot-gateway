@@ -29,7 +29,11 @@
 
 # -*- mode: python ; coding: utf-8 -*-
 
-block_cipher = None
+# Note: PyInstaller 6.0 removed the `cipher` / `block_cipher` /
+# `--key` bytecode-encryption API. Don't reintroduce a `block_cipher`
+# global or `cipher=` kwargs on `Analysis`/`PYZ`/`EXE` — would fail to
+# parse on any current (>=6.x) PyInstaller install. See PyInstaller
+# CHANGES.html and current spec-files docs.
 
 
 a = Analysis(
@@ -89,11 +93,10 @@ a = Analysis(
     excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure, a.zipped_data)
 
 exe = EXE(
     pyz,

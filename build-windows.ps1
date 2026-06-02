@@ -124,7 +124,19 @@ if ($Clean) {
     foreach ($dir in @('build', 'dist')) {
         if (Test-Path $dir) {
             Write-Host "Removing .\$dir\"
-            Remove-Item -Recurse -Force $dir
+            # Mirror the locked-exe try/catch from the stale-exe block below
+            # — same root cause: a running copilot-gateway.exe holds an
+            # exclusive lock on dist\copilot-gateway.exe, so Remove-Item
+            # throws under $ErrorActionPreference='Stop'.
+            try {
+                Remove-Item -Recurse -Force $dir
+            } catch {
+                if ($dir -eq 'dist') {
+                    Write-Error "Could not remove .\dist\ — close any running copilot-gateway.exe (tray icon, gateway process) and retry. Underlying error: $($_.Exception.Message)"
+                } else {
+                    throw
+                }
+            }
         }
     }
 }
