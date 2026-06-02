@@ -205,7 +205,15 @@ if (-not $SkipDeps) {
 $exe = Join-Path $RepoRoot 'dist\copilot-gateway.exe'
 if (Test-Path $exe) {
     Write-Host "Removing stale $exe"
-    Remove-Item -Force $exe
+    # Wrap in try/catch — if the exe is currently running (held by tray
+    # icon, gateway process, etc.) Windows locks the file and Remove-Item
+    # throws under $ErrorActionPreference='Stop'. Translate to an
+    # actionable error before the generic permission stack trace.
+    try {
+        Remove-Item -Force $exe
+    } catch {
+        Write-Error "Could not remove $exe — close any running copilot-gateway.exe (tray icon, gateway process) and retry. Underlying error: $($_.Exception.Message)"
+    }
 }
 
 # Hand off to PyInstaller. The spec drives everything (entry point, hidden
@@ -218,5 +226,7 @@ if (Test-Path $exe) {
     Write-Host "Build succeeded: $exe"
     Write-Host "Run it: .\dist\copilot-gateway.exe"
 } else {
-    Write-Error "Build finished but $exe not found. Inspect .\build\pyinstaller\warn-copilot-gateway.txt for missing modules."
+    # PyInstaller's warn-file is named after the spec basename
+    # (`pyinstaller.spec` → `warn-pyinstaller.txt`), NOT the target exe name.
+    Write-Error "Build finished but $exe not found. Inspect .\build\pyinstaller\warn-pyinstaller.txt for missing modules."
 }
