@@ -20,6 +20,24 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# `$ErrorActionPreference = 'Stop'` only halts on PowerShell cmdlet errors,
+# NOT native-command nonzero exits (`python -m pip`, `python -m PyInstaller`,
+# …). Wrap every native invocation in this helper so a failed pip / build
+# stops the script instead of falling through to a "successful" Test-Path on
+# a stale dist\copilot-gateway.exe from a prior run.
+function Invoke-Checked {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position=0)][string]$Description,
+        [Parameter(Mandatory, Position=1)][string]$Command,
+        [Parameter(ValueFromRemainingArguments=$true)][string[]]$CommandArgs
+    )
+    & $Command @CommandArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "$Description failed (exit code $LASTEXITCODE)"
+    }
+}
+
 # Repo root = directory of this script. cd here so relative paths in the
 # spec (`'demo.html'`, `'gateway.py'`, `'demo.py'`) resolve regardless of
 # where the user invoked the script from.
@@ -37,7 +55,7 @@ if (-not $python) {
     Write-Error "Python not found on PATH. Install Python 3.10+ from python.org and retry."
 }
 Write-Host "Using $($python.Source)"
-& $python.Source --version
+Invoke-Checked 'python --version' $python.Source --version
 
 if ($Clean) {
     foreach ($dir in @('build', 'dist')) {
@@ -57,22 +75,14 @@ if (-not $SkipDeps) {
     # bundle it so the frozen `.exe` doesn't 400 on Codex clients;
     # pyinstaller is the build tool. Versions intentionally unpinned —
     # the gateway runtime is stdlib-only, so version drift is low-risk.
-    & $python.Source -m pip install --upgrade pip
-    & $python.Source -m pip install pyinstaller pystray pillow zstandard
+    Invoke-Checked 'pip install --upgrade pip' $python.Source -m pip install --upgrade pip
+    Invoke-Checked 'pip install (build + runtime deps)' $python.Source -m pip install pyinstaller pystray pillow zstandard
 }
 
 # Hand off to PyInstaller. The spec drives everything (entry point, hidden
 # imports, datas, --noconsole, output name). Bare invocation = no overrides.
 Write-Host "Running PyInstaller…"
-& $python.Source -m PyInstaller pyinstaller.spec
-# `$ErrorActionPreference = 'Stop'` only affects PowerShell cmdlets, NOT
-# native commands like `python -m PyInstaller` — they only update
-# `$LASTEXITCODE`. Without this guard, a failed build with a leftover
-# `dist\copilot-gateway.exe` from a prior run silently passes the
-# `Test-Path` check below and reports success on the stale exe.
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "PyInstaller exited with code $LASTEXITCODE. Inspect .\build\copilot-gateway\warn-copilot-gateway.txt for missing modules."
-}
+Invoke-Checked 'PyInstaller' $python.Source -m PyInstaller pyinstaller.spec
 
 $exe = Join-Path $RepoRoot 'dist\copilot-gateway.exe'
 if (Test-Path $exe) {
