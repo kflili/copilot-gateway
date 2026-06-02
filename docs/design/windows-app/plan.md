@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status     | Active |
+| Status     | Implemented |
 | Priority   | Medium |
 | Complexity | Medium |
 | Depends On | — |
