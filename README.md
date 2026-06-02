@@ -351,37 +351,10 @@ The demo calls the Copilot API directly (not through the gateway) so it can swit
 
 ## Windows
 
-Two ways to run on Windows: a packaged single-`.exe` (recommended for end
-users) or directly from source (recommended for development).
+Two ways to run on Windows: directly from source (currently the working path)
+or via a packaged single-`.exe` (experimental — see Known limitation below).
 
-### Option A — packaged `.exe` (recommended)
-
-Build once, distribute the resulting `.exe` to any Windows host. Requires
-Python 3.10+ and PowerShell:
-
-```powershell
-.\build-windows.ps1
-.\dist\copilot-gateway.exe
-```
-
-The script installs PyInstaller + `pystray` + `pillow`, then invokes
-`pyinstaller pyinstaller.spec` to produce `dist\copilot-gateway.exe` —
-a single-file bundle of `tray_app.py` (entry), `gateway.py`, `demo.py`, and
-`demo.html`. No Python install needed on the target machine.
-
-Flags: `-SkipDeps` skips `pip install` if deps are already present;
-`-Clean` removes `.\build\` and `.\dist\` before building.
-
-**Known limitation (v1)**: `tray_app.py` spawns `gateway.py` via
-`subprocess.Popen([sys.executable, ...])`, which in a frozen onefile build
-resolves `sys.executable` to the bootloader `.exe` (not a Python interpreter).
-The tray UI launches, but the gateway subprocess will not start until a
-follow-up PR teaches `tray_app.py` to detect `getattr(sys, 'frozen', False)`
-and either re-spawn with a sub-command sentinel or run gateway in-process.
-Until then, use **Option B** below for a working setup. Tracked in
-`docs/design/windows-app/plan.md` § Out of Scope.
-
-### Option B — from source
+### Option A — from source (recommended)
 
 `tray_app.py` is a Windows-targeted system-tray UI that mirrors the macOS
 `menubar.swift` feature surface and adds two toggles unique to this platform:
@@ -413,6 +386,34 @@ gateway at runtime — that's deferred (see
 Mac dev box: full tray rendering targets Windows; on macOS, run
 `python3 tray_app.py --smoke` to exercise the platform / dependency probes
 without entering the pystray run loop.
+
+### Option B — packaged `.exe` (experimental, not yet functional end-to-end)
+
+Build once, distribute the resulting `.exe` to any Windows host. Requires
+Python 3.10+ and PowerShell:
+
+```powershell
+.\build-windows.ps1
+.\dist\copilot-gateway.exe
+```
+
+The script installs PyInstaller + `pystray` + `pillow` + `zstandard`, then
+invokes `pyinstaller pyinstaller.spec` to produce `dist\copilot-gateway.exe` —
+a single-file bundle of `tray_app.py` (entry), `gateway.py`, `demo.py`, and
+`demo.html`. No Python install needed on the target machine.
+
+Flags: `-SkipDeps` skips `pip install` if deps are already present;
+`-Clean` removes `.\build\` and `.\dist\` before building.
+
+**Known limitation (blocks end-to-end use)**: `tray_app.py:197` spawns
+`gateway.py` via `subprocess.Popen([sys.executable, ...])`, which in a frozen
+onefile build resolves `sys.executable` to the bootloader `.exe` (not a
+Python interpreter). The tray UI launches, but the gateway subprocess will
+not start until a follow-up PR teaches `tray_app.py` to detect
+`getattr(sys, 'frozen', False)` and either re-spawn with a sub-command
+sentinel or run gateway in-process. **Until that follow-up lands, use
+Option A (from source) for a working setup**; this PR ships only the build
+infrastructure. Tracked in `docs/design/windows-app/plan.md` § Out of Scope.
 
 ### Build artifacts
 

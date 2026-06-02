@@ -29,7 +29,7 @@ function Invoke-Checked {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory, Position=0)][string]$Description,
-        [Parameter(Mandatory, Position=1)][string]$Command,
+        [Parameter(Mandatory, Position=1)]$Command,
         [Parameter(ValueFromRemainingArguments=$true)][string[]]$CommandArgs
     )
     & $Command @CommandArgs
@@ -47,15 +47,27 @@ Set-Location $RepoRoot
 # Bound the bootstrap concretely so failures surface here, not deep inside
 # PyInstaller analysis. `??` is PowerShell 7+ only — Win10/11 ship Windows
 # PowerShell 5.1 inbox, so use the 5.1-compatible `if` fallback instead.
-$python = Get-Command python -ErrorAction SilentlyContinue
+# Resolution order: python → python3 → py (the Windows Python Launcher,
+# bundled with python.org installers; often the only Python on PATH).
+# `Select-Object -First 1` is defensive: single-name `Get-Command` returns
+# the resolved command, but the explicit slice future-proofs if `-All`
+# semantics ever change.
+$python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $python) {
-    $python = Get-Command python3 -ErrorAction SilentlyContinue
+    $python = Get-Command python3 -ErrorAction SilentlyContinue | Select-Object -First 1
+}
+if (-not $python) {
+    $python = Get-Command py -ErrorAction SilentlyContinue | Select-Object -First 1
 }
 if (-not $python) {
     Write-Error "Python not found on PATH. Install Python 3.10+ from python.org and retry."
 }
-Write-Host "Using $($python.Source)"
-Invoke-Checked 'python --version' $python.Source --version
+# Use `.Path` for printing (always populated on ApplicationInfo across PS
+# 5.1 + 7), and invoke `$python` directly via the call operator `&` (which
+# accepts CommandInfo natively) so we don't depend on `.Source` — empirically
+# unreliable for external executables on Windows PowerShell 5.1.
+Write-Host "Using $($python.Path)"
+Invoke-Checked 'python --version' $python --version
 
 if ($Clean) {
     foreach ($dir in @('build', 'dist')) {
@@ -75,14 +87,14 @@ if (-not $SkipDeps) {
     # bundle it so the frozen `.exe` doesn't 400 on Codex clients;
     # pyinstaller is the build tool. Versions intentionally unpinned —
     # the gateway runtime is stdlib-only, so version drift is low-risk.
-    Invoke-Checked 'pip install --upgrade pip' $python.Source -m pip install --upgrade pip
-    Invoke-Checked 'pip install (build + runtime deps)' $python.Source -m pip install pyinstaller pystray pillow zstandard
+    Invoke-Checked 'pip install --upgrade pip' $python -m pip install --upgrade pip
+    Invoke-Checked 'pip install (build + runtime deps)' $python -m pip install pyinstaller pystray pillow zstandard
 }
 
 # Hand off to PyInstaller. The spec drives everything (entry point, hidden
 # imports, datas, --noconsole, output name). Bare invocation = no overrides.
 Write-Host "Running PyInstaller…"
-Invoke-Checked 'PyInstaller' $python.Source -m PyInstaller pyinstaller.spec
+Invoke-Checked 'PyInstaller' $python -m PyInstaller pyinstaller.spec
 
 $exe = Join-Path $RepoRoot 'dist\copilot-gateway.exe'
 if (Test-Path $exe) {

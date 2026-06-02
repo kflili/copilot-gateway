@@ -90,7 +90,9 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # UPX compression triggers Windows Defender false positives
+                # and can corrupt bundled C extensions (Pillow, tkinter DLLs)
+                # — small size win not worth the AV / runtime-stability hit.
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,  # tray app: no console window (Plan §Subprocess hygiene)
