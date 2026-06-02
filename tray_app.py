@@ -726,17 +726,25 @@ def enable_for_wsl(distro: str, port: int) -> tuple[bool, str]:
         "    except Exception: pass\n"
         "    d = {}\n"
         "env = d.get('env') if isinstance(d.get('env'), dict) else {}\n"
-        "env['ANTHROPIC_AUTH_TOKEN'] = 'dummy'\n"
-        "env['ANTHROPIC_CUSTOM_HEADERS'] = 'X-Gateway-Origin: wsl'\n"
+        # Only write the dummy token + origin header WHEN we also write a
+        # BASE_URL. Otherwise VS Code WSL launches inherit a dummy token,
+        # try to hit the real Anthropic API, and 401 — silently breaking
+        # the user's pre-toggle auth. The rc-file wrapper still covers
+        # interactive shells regardless.
         "if base:\n"
         "    env['ANTHROPIC_BASE_URL'] = base\n"
+        "    env['ANTHROPIC_AUTH_TOKEN'] = 'dummy'\n"
+        "    env['ANTHROPIC_CUSTOM_HEADERS'] = 'X-Gateway-Origin: wsl'\n"
         # Codex CLI on WSL reads OPENAI_*, not ANTHROPIC_* — mirror for it
         # too so VS Code WSL launches of codex also route through the gateway.
         "    env['OPENAI_BASE_URL'] = base.rstrip('/') + '/v1'\n"
         "    env['OPENAI_API_KEY'] = 'dummy'\n"
         "else:\n"
         "    env.pop('ANTHROPIC_BASE_URL', None)\n"
+        "    env.pop('ANTHROPIC_AUTH_TOKEN', None)\n"
+        "    env.pop('ANTHROPIC_CUSTOM_HEADERS', None)\n"
         "    env.pop('OPENAI_BASE_URL', None)\n"
+        "    env.pop('OPENAI_API_KEY', None)\n"
         "    d['_comment_base_url'] = ('ANTHROPIC_BASE_URL omitted: '\n"
         "        'mirrored mode is off and host.docker.internal does not '\n"
         "        'resolve. Set it manually or enable mirrored mode in '\n"
