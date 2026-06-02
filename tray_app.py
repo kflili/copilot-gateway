@@ -641,14 +641,28 @@ def _wsl_detect_shell(distro: str) -> tuple[str, str]:
     return (name, rc)
 
 
-def enable_for_wsl(distro: str, port: int) -> tuple[bool, str]:
+def enable_for_wsl(distro: str, port: int,
+                   gateway_host: str | None = None) -> tuple[bool, str]:
     """Append the shell-function wrapper to the chosen distro's rc-file
     (idempotent — replaces an existing block matched by marker comments) and
     merge ANTHROPIC_* env into `~/.claude/settings.json` inside the distro.
-    Returns (ok, message)."""
+    Returns (ok, message).
+
+    `gateway_host` is the host the user's tray-spawned gateway is actually
+    bound to. When it's a loopback IP and the distro isn't in mirrored mode,
+    the WSL-side env we'd write points at a host where the gateway isn't
+    listening — silent broken-config (codex P2). Refuse with a clear message
+    so the user re-launches the tray with `--host 0.0.0.0` first."""
     if shutil.which("wsl.exe") is None:
         return (False, "wsl.exe not on PATH — Enable-for-WSL only runs on "
                        "Windows hosts with WSL installed.")
+    if gateway_host in ("127.0.0.1", "localhost") and not wsl_mirrored_mode():
+        return (False, "Gateway is bound to 127.0.0.1 (loopback only). WSL "
+                       "distros can't reach loopback unless WSL2 is in "
+                       "mirrored networking mode. Restart the tray with "
+                       "`python tray_app.py --host 0.0.0.0` (accepts the "
+                       "LAN-exposed posture in Stats popup), or enable "
+                       "mirrored mode in %USERPROFILE%\\.wslconfig.")
     shell_name, rc_path = _wsl_detect_shell(distro)
     wsl_userprofile = _wsl_resolve_userprofile(distro)
     block = _wsl_rc_block(port, shell=shell_name,
@@ -1173,8 +1187,10 @@ class TrayUI:
             if ok:
                 self.wsl_enabled_distros.add(distro)
             # See _toggle_windows — checkmark lambdas are dynamic.
-        self._run_off_main(lambda: enable_for_wsl(distro, self.gateway.port),
-                           f"Enable for WSL ({distro})", on_done=_on_done)
+        self._run_off_main(
+            lambda: enable_for_wsl(distro, self.gateway.port,
+                                   gateway_host=self.gateway.host),
+            f"Enable for WSL ({distro})", on_done=_on_done)
 
     def _test_wsl(self, distro: str):
         self._run_off_main(lambda: test_wsl_env(distro),
