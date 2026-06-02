@@ -95,14 +95,20 @@ $python = $null
 foreach ($name in @('python', 'python3', 'py')) {
     # `-CommandType Application` restricts the lookup to executables only,
     # so a user-defined `python` alias or function in the PS profile can't
-    # shadow the real interpreter. Test-PythonCandidate would catch most
-    # impostors via its --version probe anyway, but the CommandType filter
-    # is the cheaper first-line defense.
-    $candidate = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (Test-PythonCandidate $candidate) {
-        $python = $candidate
-        break
+    # shadow the real interpreter. `-All` returns every match in PATH
+    # order — necessary because Windows commonly has the 0-byte MS Store
+    # `python.exe` shim earlier on PATH than a real python.org install,
+    # and without `-All` we'd reject the shim and never check the real
+    # interpreter further down PATH. Inner loop probes each match until
+    # one passes Test-PythonCandidate.
+    $candidates = Get-Command $name -All -CommandType Application -ErrorAction SilentlyContinue
+    foreach ($candidate in $candidates) {
+        if (Test-PythonCandidate $candidate) {
+            $python = $candidate
+            break
+        }
     }
+    if ($python) { break }
 }
 if (-not $python) {
     Write-Error "No usable Python 3.x found on PATH (tried python, python3, py — Microsoft Store alias and 0-byte stubs are skipped). Install Python 3.10+ from python.org and retry."
