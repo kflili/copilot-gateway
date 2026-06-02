@@ -348,6 +348,40 @@ The demo UI at `localhost:8788` provides:
 
 The demo calls the Copilot API directly (not through the gateway) so it can switch modes per-request.
 
+## Windows tray app
+
+`tray_app.py` is a Windows-targeted system-tray UI that mirrors the macOS
+`menubar.swift` feature surface and adds two toggles unique to this platform:
+**Enable for Windows** (writes `ANTHROPIC_*` to user env via `setx` and
+`%USERPROFILE%\.claude\settings.json`) and **Enable for WSL** (writes a
+shell-function wrapper into the chosen distro's rc-file so the Windows host IP
+is resolved at every shell start).
+
+Install (Windows):
+
+```powershell
+pip install pystray pillow
+python tray_app.py
+```
+
+Menu items: Stats (per-origin breakdown from the `per_origin` field of
+`/stats`), View logs (color-coded by origin from `/logs`), Copy claude /
+codex command, Enable for Windows + [Test], Enable for WSL submenu (one
+entry per distro) + per-distro [Test], Stop & quit.
+
+Bind safety: by default the spawned gateway listens on `127.0.0.1` (loopback —
+not reachable from WSL or LAN). To make it reachable from WSL distros,
+launch with `python tray_app.py --host 0.0.0.0` and accept the
+LAN-exposure posture shown in the Stats popup. The Enable-for-WSL toggle
+writes env into the chosen distro but does NOT re-bind the running
+gateway at runtime — that's deferred (see
+`docs/design/windows-app/plan.md` §"Out of Scope").
+
+Mac dev box: full tray rendering targets Windows; on macOS, run
+`python3 tray_app.py --smoke` to exercise the platform / dependency probes
+without entering the pystray run loop. Packaging into a single `.exe` lands in
+Item 5 (a follow-up Windows section will cover PyInstaller).
+
 ## Files
 
 | File | Purpose |
@@ -356,6 +390,7 @@ The demo calls the Copilot API directly (not through the gateway) so it can swit
 | `demo.py` | Demo web app with call-flow instrumentation |
 | `demo.html` | Split-pane UI (chat + flow log + mode toggle) |
 | `menubar.swift` | macOS menu bar indicator source (compile: `swiftc menubar.swift -o menubar -framework Cocoa`) |
+| `tray_app.py` | Windows system-tray UI: stats / logs / Win + WSL toggles. Install: `pip install pystray pillow` |
 | `mini-cli.py` | Lightweight terminal CLI (~100 lines) |
 | `test-copilot-api.sh` | End-to-end test script |
 | `docs/research.md` | How the Copilot API was discovered and how auth works |
