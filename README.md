@@ -364,17 +364,18 @@ pip install pystray pillow
 python tray_app.py
 ```
 
-Menu items: Stats (per-origin breakdown from `/stats per_origin`), View logs
-(color-coded by origin from `/logs`), Copy claude / codex command, Enable for
-Windows + [Test], Enable for WSL submenu (one entry per distro) + per-distro
-[Test], Stop & quit.
+Menu items: Stats (per-origin breakdown from the `per_origin` field of
+`/stats`), View logs (color-coded by origin from `/logs`), Copy claude /
+codex command, Enable for Windows + [Test], Enable for WSL submenu (one
+entry per distro) + per-distro [Test], Stop & quit.
 
 Bind safety: by default the spawned gateway listens on `127.0.0.1` (loopback —
-not reachable from WSL or LAN). When you turn on Enable for WSL, the tray
-will need to re-bind to a host that WSL can reach; rebind-on-toggle is
-deferred (see `docs/design/windows-app/plan.md` §"Out of Scope"). To launch
-with WSL access up-front, run `python tray_app.py --host 0.0.0.0` and accept
-the LAN-exposure warning shown in the Stats popup.
+not reachable from WSL or LAN). To make it reachable from WSL distros,
+launch with `python tray_app.py --host 0.0.0.0` and accept the
+LAN-exposure posture shown in the Stats popup. The Enable-for-WSL toggle
+writes env into the chosen distro but does NOT re-bind the running
+gateway at runtime — that's deferred (see
+`docs/design/windows-app/plan.md` §"Out of Scope").
 
 Mac dev box: full tray rendering targets Windows; on macOS, run
 `python3 tray_app.py --smoke` to exercise the platform / dependency probes
