@@ -79,6 +79,23 @@ if ($Clean) {
 }
 
 if (-not $SkipDeps) {
+    # Plan §Item 5 specifies installing into a venv — isolates PyInstaller +
+    # pystray + pillow + zstandard from the user's system Python (avoids
+    # global pollution + permission failures on Windows Store / system-managed
+    # Pythons). Create `.venv` next to the script and rebind `$python` to its
+    # interpreter for the remainder of the build.
+    $venvDir = Join-Path $RepoRoot '.venv'
+    if (-not (Test-Path $venvDir)) {
+        Write-Host "Creating virtual environment at .venv\…"
+        Invoke-Checked 'python -m venv .venv' $python -m venv $venvDir
+    }
+    $venvPython = Join-Path $venvDir 'Scripts\python.exe'
+    if (-not (Test-Path $venvPython)) {
+        Write-Error "Expected venv interpreter at $venvPython but file is missing."
+    }
+    $python = Get-Command $venvPython
+    Write-Host "Using venv python: $($python.Path)"
+
     Write-Host "Installing build + runtime deps…"
     # Single combined install so pip resolves once. pystray + pillow are
     # runtime deps the tray loads lazily (tray_app.py:903, 952, 998);
@@ -89,6 +106,26 @@ if (-not $SkipDeps) {
     # the gateway runtime is stdlib-only, so version drift is low-risk.
     Invoke-Checked 'pip install --upgrade pip' $python -m pip install --upgrade pip
     Invoke-Checked 'pip install (build + runtime deps)' $python -m pip install pyinstaller pystray pillow zstandard
+} else {
+    # -SkipDeps assumes the venv (or whatever python the user supplied) is
+    # already set up; reuse it if present so PyInstaller runs under the same
+    # interpreter as a normal build.
+    $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+    if (Test-Path $venvPython) {
+        $python = Get-Command $venvPython
+        Write-Host "Reusing venv python: $($python.Path)"
+    }
+}
+
+# Remove any stale `dist\copilot-gateway.exe` from a prior build BEFORE
+# invoking PyInstaller. Defensive belt-and-suspenders: Invoke-Checked
+# already halts on nonzero exit (via Write-Error + $ErrorActionPreference =
+# 'Stop'), but explicitly clearing the target ensures the post-build
+# Test-Path check can only succeed on a fresh artifact.
+$exe = Join-Path $RepoRoot 'dist\copilot-gateway.exe'
+if (Test-Path $exe) {
+    Write-Host "Removing stale $exe"
+    Remove-Item -Force $exe
 }
 
 # Hand off to PyInstaller. The spec drives everything (entry point, hidden
@@ -96,7 +133,6 @@ if (-not $SkipDeps) {
 Write-Host "Running PyInstaller…"
 Invoke-Checked 'PyInstaller' $python -m PyInstaller pyinstaller.spec
 
-$exe = Join-Path $RepoRoot 'dist\copilot-gateway.exe'
 if (Test-Path $exe) {
     Write-Host ""
     Write-Host "Build succeeded: $exe"

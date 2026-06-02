@@ -9,3 +9,4 @@ CopilotGateway.app/
 build/
 dist/
 *.spec.bak
+.venv/

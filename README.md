@@ -419,7 +419,9 @@ infrastructure. Tracked in `docs/design/windows-app/plan.md` § Out of Scope.
 
 `build-windows.ps1` and `pyinstaller.spec` live at the repo root.
 PyInstaller drops the executable in `dist\copilot-gateway.exe` and
-intermediate work in `build\`. Both directories are gitignored.
+intermediate work in `build\`. The script provisions a local `.venv\` for
+build + runtime deps so it doesn't pollute your system Python. All three
+directories (`.venv\`, `build\`, `dist\`) are gitignored.
 
 ## Files
 
