@@ -52,16 +52,27 @@ if (-not $SkipDeps) {
     Write-Host "Installing build + runtime deps…"
     # Single combined install so pip resolves once. pystray + pillow are
     # runtime deps the tray loads lazily (tray_app.py:903, 952, 998);
+    # zstandard is an optional gateway dep that decodes Codex CLI's
+    # `Content-Encoding: zstd` request bodies (gateway.py:47-54, 758-766) —
+    # bundle it so the frozen `.exe` doesn't 400 on Codex clients;
     # pyinstaller is the build tool. Versions intentionally unpinned —
     # the gateway runtime is stdlib-only, so version drift is low-risk.
     & $python.Source -m pip install --upgrade pip
-    & $python.Source -m pip install pyinstaller pystray pillow
+    & $python.Source -m pip install pyinstaller pystray pillow zstandard
 }
 
 # Hand off to PyInstaller. The spec drives everything (entry point, hidden
 # imports, datas, --noconsole, output name). Bare invocation = no overrides.
 Write-Host "Running PyInstaller…"
 & $python.Source -m PyInstaller pyinstaller.spec
+# `$ErrorActionPreference = 'Stop'` only affects PowerShell cmdlets, NOT
+# native commands like `python -m PyInstaller` — they only update
+# `$LASTEXITCODE`. Without this guard, a failed build with a leftover
+# `dist\copilot-gateway.exe` from a prior run silently passes the
+# `Test-Path` check below and reports success on the stale exe.
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "PyInstaller exited with code $LASTEXITCODE. Inspect .\build\copilot-gateway\warn-copilot-gateway.txt for missing modules."
+}
 
 $exe = Join-Path $RepoRoot 'dist\copilot-gateway.exe'
 if (Test-Path $exe) {

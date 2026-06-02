@@ -59,6 +59,13 @@ a = Analysis(
         # imported, but listed defensively in case PyInstaller's stdlib
         # module-graph misses it on Windows.
         'ipaddress',
+        # Optional gateway dep — gateway.py:47-54 imports zstandard inside
+        # a try/except for Codex CLI's `Content-Encoding: zstd` request
+        # bodies (gateway.py:758-766). The `.exe` is self-contained and
+        # cannot rely on target-machine pip installs; without this entry,
+        # Codex CLI clients hit `400 Failed to decompress zstd body:
+        # zstandard module not installed` (gateway.py:766).
+        'zstandard',
     ],
     hookspath=[],
     hooksconfig={},
