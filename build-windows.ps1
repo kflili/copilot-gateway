@@ -44,13 +44,18 @@ function Invoke-Checked {
 }
 
 # Probe a candidate Python CommandInfo to confirm it's a usable interpreter.
-# Catches two Windows-specific traps:
+# Catches three Windows-specific traps:
 #   1. The Microsoft Store app-execution alias for `python` / `python3` lives
 #      at `…\WindowsApps\python.exe` as a 0-byte stub — invoking it pops the
 #      Store install prompt instead of running Python.
 #   2. An ancient Python on PATH (e.g., 2.7) that `tray_app.py`'s PEP 604
-#      unions wouldn't parse.
-# Returns $true iff `& $Command --version` exits 0 and reports Python 3.x.
+#      union syntax wouldn't parse.
+#   3. Python 3.9 or older: tray_app.py:90 uses `str | None` (PEP 604) and
+#      requires 3.10+. Accepting 3.9 would let the build start but PyInstaller
+#      would fail at the analysis step or the .exe would crash at first call.
+# Returns $true iff `& $Command --version` exits 0 and reports Python ≥3.10.
+# The version regex is intentionally NOT anchored to `^` — PYTHONSTARTUP can
+# emit lines before the version string.
 function Test-PythonCandidate {
     param($Command)
     if (-not $Command) { return $false }
@@ -59,7 +64,12 @@ function Test-PythonCandidate {
     } catch { return $false }
     $output = & $Command.Path --version 2>&1
     if ($LASTEXITCODE -ne 0) { return $false }
-    return ([string]$output -match '^Python\s+3\.')
+    if (([string]$output) -match 'Python\s+(\d+)\.(\d+)') {
+        $major = [int]$matches[1]
+        $minor = [int]$matches[2]
+        return ($major -gt 3) -or ($major -eq 3 -and $minor -ge 10)
+    }
+    return $false
 }
 
 # Repo root = directory of this script. cd here so relative paths in the
