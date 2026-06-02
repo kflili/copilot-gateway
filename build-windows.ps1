@@ -23,13 +23,16 @@ $ErrorActionPreference = 'Stop'
 # Repo root = directory of this script. cd here so relative paths in the
 # spec (`'demo.html'`, `'gateway.py'`, `'demo.py'`) resolve regardless of
 # where the user invoked the script from.
-$RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = $PSScriptRoot
 Set-Location $RepoRoot
 
 # Bound the bootstrap concretely so failures surface here, not deep inside
-# PyInstaller analysis.
-$python = (Get-Command python -ErrorAction SilentlyContinue) `
-        ?? (Get-Command python3 -ErrorAction SilentlyContinue)
+# PyInstaller analysis. `??` is PowerShell 7+ only — Win10/11 ship Windows
+# PowerShell 5.1 inbox, so use the 5.1-compatible `if` fallback instead.
+$python = Get-Command python -ErrorAction SilentlyContinue
+if (-not $python) {
+    $python = Get-Command python3 -ErrorAction SilentlyContinue
+}
 if (-not $python) {
     Write-Error "Python not found on PATH. Install Python 3.10+ from python.org and retry."
 }
