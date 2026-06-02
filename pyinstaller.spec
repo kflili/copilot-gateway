@@ -66,6 +66,22 @@ a = Analysis(
         # Codex CLI clients hit `400 Failed to decompress zstd body:
         # zstandard module not installed` (gateway.py:766).
         'zstandard',
+        # Stdlib modules imported by `gateway.py` and `demo.py` but NOT by
+        # `tray_app.py`. Both files ship via `datas` (not as entry-point
+        # source), so PyInstaller's static-analysis pass doesn't scan them
+        # — anything they import that isn't in tray_app.py's dep graph is
+        # missing from the bundle. Currently moot since the frozen-mode
+        # gateway spawn doesn't work yet (see plan §Out of Scope), but
+        # pre-emptively listing them keeps the bundle complete for the
+        # follow-up that wires the spawn.
+        'gzip',
+        'http.server',
+        'logging',
+        'secrets',
+        'queue',
+        'traceback',
+        'uuid',
+        'datetime',
     ],
     hookspath=[],
     hooksconfig={},

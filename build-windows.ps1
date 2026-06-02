@@ -59,15 +59,21 @@ function Invoke-Checked {
 function Test-PythonCandidate {
     param($Command)
     if (-not $Command) { return $false }
+    # Wrap the probe in try/catch — under `$ErrorActionPreference = 'Stop'`,
+    # a corrupted / unreadable / permission-denied interpreter would throw
+    # a terminating error and crash the whole script instead of letting the
+    # picker loop fall through to the next candidate.
     try {
         if ((Get-Item -LiteralPath $Command.Path -ErrorAction Stop).Length -eq 0) { return $false }
-    } catch { return $false }
-    $output = & $Command.Path --version 2>&1
-    if ($LASTEXITCODE -ne 0) { return $false }
-    if (([string]$output) -match 'Python\s+(\d+)\.(\d+)') {
-        $major = [int]$matches[1]
-        $minor = [int]$matches[2]
-        return ($major -gt 3) -or ($major -eq 3 -and $minor -ge 10)
+        $output = & $Command.Path --version 2>&1
+        if ($LASTEXITCODE -ne 0) { return $false }
+        if (([string]$output) -match 'Python\s+(\d+)\.(\d+)') {
+            $major = [int]$matches[1]
+            $minor = [int]$matches[2]
+            return ($major -gt 3) -or ($major -eq 3 -and $minor -ge 10)
+        }
+    } catch {
+        return $false
     }
     return $false
 }
