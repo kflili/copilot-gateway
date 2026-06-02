@@ -726,9 +726,9 @@ async function pollGatewayOnce() {
   }
 }
 
-function startGatewayPoller() {
-  pollGatewayOnce();
-  setInterval(pollGatewayOnce, GATEWAY_POLL_MS);
+async function startGatewayPoller() {
+  await pollGatewayOnce();
+  setTimeout(startGatewayPoller, GATEWAY_POLL_MS);
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────

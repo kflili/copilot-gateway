@@ -384,7 +384,8 @@ class DemoHandler(http.server.BaseHTTPRequestHandler):
                 # Forward ?n=<int> if present; default 200 (gateway clamps to 2000)
                 from urllib.parse import urlparse, parse_qs
                 qs = parse_qs(urlparse(self.path).query)
-                n = qs.get("n", ["200"])[0]
+                n_val = qs.get("n", ["200"])[0]
+                n = n_val if n_val.isdigit() else "200"
                 self._proxy_gateway(f"/logs?n={n}", "text/plain; charset=utf-8")
             elif path == "/health":
                 self._json_response(200, {"status": "ok"})
@@ -691,9 +692,10 @@ class DemoHandler(http.server.BaseHTTPRequestHandler):
         (works even if the gateway later tightens its CORS posture)."""
         url = GATEWAY_URL + path
         try:
-            resp = urllib.request.urlopen(urllib.request.Request(url), timeout=5)
-            data = resp.read()
-            self._raw_response(resp.status, content_type, data)
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = resp.read()
+                self._raw_response(resp.status, content_type, data)
         except urllib.error.HTTPError as e:
             err = e.read() if hasattr(e, "read") else str(e).encode()
             self._raw_response(e.code, content_type, err)
