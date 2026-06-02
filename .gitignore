@@ -4,3 +4,9 @@ __pycache__/
 .gateway-token.json
 menubar
 CopilotGateway.app/
+
+# PyInstaller build artifacts (build-windows.ps1)
+build/
+dist/
+*.spec.bak
+.venv/
