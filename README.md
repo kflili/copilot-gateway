@@ -54,7 +54,7 @@ Mac-documented step has no Windows analogue (or vice versa).
 | Route Claude through gateway | Manual: `cgcc` alias in `~/.zshrc` or `env` block in `~/.claude/settings.json` | Tray app one-click: **Enable for Windows** toggle |
 | Route a sibling Linux env | N/A (no Mac↔Linux automation) | **Enable for WSL** submenu — writes env into chosen distro with dynamic Windows-host-IP resolution |
 | Verify routing works | Run `cgcc` and try a prompt | **[Test]** button per toggle → green/red toast |
-| Live stats / control surface | ⚡️CG menubar (Swift binary or `CopilotGateway.app`) | Tray app shows stats inline + per-host breakdown |
+| Live stats / control surface | ⚡️CG menu bar (Swift binary or `CopilotGateway.app`) | Tray app shows stats inline + per-host breakdown |
 
 **Why the asymmetry**: Mac users on this codebase self-select into a CLI-heavy
 workflow (`cg` to start, `cgcc` in any terminal, edit `~/.zshrc` to taste), so
