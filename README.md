@@ -119,7 +119,9 @@ alias ca="claude --enable-auto-mode"
 | Command | What it does |
 |---------|-------------|
 | `cg` | Start gateway in background (+ demo UI on :8788, + ⚡️CG menu bar) with per-session logs |
-| `cgcc` | Claude Code through gateway, skip all permissions |
+| `cgcc` | Claude Code through gateway on Claude Opus 4.8 (xhigh effort, native 1M context), skip all permissions |
+| `cgcc48` | Same as `cgcc` |
+| `cgcc47` | Claude Code through gateway on Claude Opus 4.7 (1M context), skip all permissions |
 | `cgca` | Claude Code through gateway, auto mode (safer, when available) |
 | `cgcx` | Codex CLI through gateway (gpt-5.5/5.4 etc., workspace-write sandbox) |
 | `cc` | Claude Code direct, skip all permissions |
@@ -394,6 +396,31 @@ Menu items: Stats (per-origin breakdown from the `per_origin` field of
 `/stats`), View logs (color-coded by origin from `/logs`), Copy claude /
 codex command, Enable for Windows + [Test], Enable for WSL submenu (one
 entry per distro) + per-distro [Test], Stop & quit.
+
+### After pulling updates on Windows
+
+After `git pull`, restart the tray app and run **Enable for Windows** again.
+The toggle writes gateway routing env plus the Claude Code default model to
+user scope via `setx` and merges the same values into
+`%USERPROFILE%\.claude\settings.json`.
+
+Current Claude default written by the tray:
+
+```text
+ANTHROPIC_MODEL=claude-opus-4-8
+ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-8
+ANTHROPIC_DEFAULT_OPUS_MODEL_NAME=Opus 4.8 via Gateway
+ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES=effort,xhigh_effort,thinking,adaptive_thinking,interleaved_thinking
+```
+
+The tray also sets `"model": "claude-opus-4-8"` and
+`"effortLevel": "xhigh"` in Claude Code settings. Restart open terminals,
+IDE windows, and Claude Code sessions after enabling because `setx` does not
+change already-running processes.
+
+For WSL, run **Enable for WSL** for each distro you use. It rewrites the
+distro rc-file block and, when a stable Windows-host URL is available, merges
+the same 4.8/xhigh defaults into that distro's `~/.claude/settings.json`.
 
 Bind safety: by default the spawned gateway listens on `127.0.0.1` (loopback —
 not reachable from WSL or LAN). To make it reachable from WSL distros,

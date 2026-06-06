@@ -411,6 +411,7 @@ def enable_for_windows(base_url: str) -> tuple[bool, str]:
         "ANTHROPIC_BASE_URL": base_url,
         "ANTHROPIC_AUTH_TOKEN": "dummy",
         "ANTHROPIC_CUSTOM_HEADERS": "X-Gateway-Origin: windows",
+        **CLAUDE_MODEL_DEFAULTS,
     }
     for name, value in env_pairs.items():
         ok, msg = _setx_user(name, value)
@@ -419,7 +420,8 @@ def enable_for_windows(base_url: str) -> tuple[bool, str]:
     home = Path(os.environ.get("USERPROFILE") or os.path.expanduser("~"))
     cfg = home / ".claude" / "settings.json"
     try:
-        _merge_claude_settings(cfg, env_pairs)
+        _merge_claude_settings(cfg, env_pairs,
+                               settings_updates=CLAUDE_SETTINGS_DEFAULTS)
     except OSError as e:
         return (False, f"setx ok, but settings.json write failed: {e}")
     return (True, "Windows env updated. Restart any open terminals / IDEs to "
@@ -439,7 +441,8 @@ def _setx_user(name: str, value: str) -> tuple[bool, str]:
     return (True, "")
 
 
-def _merge_claude_settings(path: Path, env_updates: dict[str, str]) -> None:
+def _merge_claude_settings(path: Path, env_updates: dict[str, str],
+                           settings_updates: dict[str, str] | None = None) -> None:
     """Merge env_updates into the file's `env` block, preserving everything
     else. Creates parent dir + file if missing. UTF-8 explicit because
     Path.read_text()/write_text() default to the system code page on Windows
@@ -467,6 +470,8 @@ def _merge_claude_settings(path: Path, env_updates: dict[str, str]) -> None:
     env = data.get("env") if isinstance(data.get("env"), dict) else {}
     env.update(env_updates)
     data["env"] = env
+    if settings_updates:
+        data.update(settings_updates)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
@@ -483,6 +488,18 @@ def _backup_unreadable(path: Path, raw: str, reason: str) -> None:
 
 WSL_RC_BLOCK_MARKER = "# >>> copilot-gateway env >>>"
 WSL_RC_BLOCK_END = "# <<< copilot-gateway env <<<"
+CLAUDE_MODEL_DEFAULTS = {
+    "ANTHROPIC_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus 4.8 via Gateway",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES": (
+        "effort,xhigh_effort,thinking,adaptive_thinking,interleaved_thinking"
+    ),
+}
+CLAUDE_SETTINGS_DEFAULTS = {
+    "model": "claude-opus-4-8",
+    "effortLevel": "xhigh",
+}
 
 
 def _wsl_rc_block(port: int, shell: str = "bash",
@@ -542,6 +559,10 @@ if [ -n "$_cg_host" ]; then
     export ANTHROPIC_BASE_URL="http://$_cg_host:{port}"
     export ANTHROPIC_AUTH_TOKEN=dummy
     export ANTHROPIC_CUSTOM_HEADERS="X-Gateway-Origin: wsl"
+    export ANTHROPIC_MODEL="{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_MODEL']}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_DEFAULT_OPUS_MODEL']}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL_NAME="{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_DEFAULT_OPUS_MODEL_NAME']}"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES="{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES']}"
     export OPENAI_BASE_URL="http://$_cg_host:{port}/v1"
     export OPENAI_API_KEY=dummy
 fi
@@ -595,6 +616,10 @@ if test -n "$_cg_host"
     set -gx ANTHROPIC_BASE_URL "http://$_cg_host:{port}"
     set -gx ANTHROPIC_AUTH_TOKEN dummy
     set -gx ANTHROPIC_CUSTOM_HEADERS "X-Gateway-Origin: wsl"
+    set -gx ANTHROPIC_MODEL "{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_MODEL']}"
+    set -gx ANTHROPIC_DEFAULT_OPUS_MODEL "{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_DEFAULT_OPUS_MODEL']}"
+    set -gx ANTHROPIC_DEFAULT_OPUS_MODEL_NAME "{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_DEFAULT_OPUS_MODEL_NAME']}"
+    set -gx ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES "{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES']}"
     set -gx OPENAI_BASE_URL "http://$_cg_host:{port}/v1"
     set -gx OPENAI_API_KEY dummy
 end
@@ -764,6 +789,12 @@ def enable_for_wsl(distro: str, port: int,
         "    env['ANTHROPIC_BASE_URL'] = base\n"
         "    env['ANTHROPIC_AUTH_TOKEN'] = 'dummy'\n"
         "    env['ANTHROPIC_CUSTOM_HEADERS'] = 'X-Gateway-Origin: wsl'\n"
+        f"    env['ANTHROPIC_MODEL'] = '{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_MODEL']}'\n"
+        f"    env['ANTHROPIC_DEFAULT_OPUS_MODEL'] = '{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_DEFAULT_OPUS_MODEL']}'\n"
+        f"    env['ANTHROPIC_DEFAULT_OPUS_MODEL_NAME'] = '{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_DEFAULT_OPUS_MODEL_NAME']}'\n"
+        f"    env['ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES'] = '{CLAUDE_MODEL_DEFAULTS['ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES']}'\n"
+        f"    d['model'] = '{CLAUDE_SETTINGS_DEFAULTS['model']}'\n"
+        f"    d['effortLevel'] = '{CLAUDE_SETTINGS_DEFAULTS['effortLevel']}'\n"
         # Codex CLI on WSL reads OPENAI_*, not ANTHROPIC_* — mirror for it
         # too so VS Code WSL launches of codex also route through the gateway.
         "    env['OPENAI_BASE_URL'] = base.rstrip('/') + '/v1'\n"
@@ -772,6 +803,10 @@ def enable_for_wsl(distro: str, port: int,
         "    env.pop('ANTHROPIC_BASE_URL', None)\n"
         "    env.pop('ANTHROPIC_AUTH_TOKEN', None)\n"
         "    env.pop('ANTHROPIC_CUSTOM_HEADERS', None)\n"
+        "    env.pop('ANTHROPIC_MODEL', None)\n"
+        "    env.pop('ANTHROPIC_DEFAULT_OPUS_MODEL', None)\n"
+        "    env.pop('ANTHROPIC_DEFAULT_OPUS_MODEL_NAME', None)\n"
+        "    env.pop('ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES', None)\n"
         "    env.pop('OPENAI_BASE_URL', None)\n"
         "    env.pop('OPENAI_API_KEY', None)\n"
         "    d['_comment_base_url'] = ('ANTHROPIC_BASE_URL omitted: '\n"
