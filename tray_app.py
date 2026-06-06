@@ -489,15 +489,15 @@ def _backup_unreadable(path: Path, raw: str, reason: str) -> None:
 WSL_RC_BLOCK_MARKER = "# >>> copilot-gateway env >>>"
 WSL_RC_BLOCK_END = "# <<< copilot-gateway env <<<"
 CLAUDE_MODEL_DEFAULTS = {
-    "ANTHROPIC_MODEL": "claude-opus-4-8",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_MODEL": "claude-opus-4-8[1m]",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8[1m]",
     "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus 4.8 via Gateway",
     "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES": (
         "effort,xhigh_effort,thinking,adaptive_thinking,interleaved_thinking"
     ),
 }
 CLAUDE_SETTINGS_DEFAULTS = {
-    "model": "claude-opus-4-8",
+    "model": "claude-opus-4-8[1m]",
     "effortLevel": "xhigh",
 }
 
