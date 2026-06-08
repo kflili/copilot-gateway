@@ -55,6 +55,26 @@ MONO_FONT = "TkFixedFont"
 HERE = Path(__file__).resolve().parent
 GATEWAY_PY = HERE / "gateway.py"
 
+# Stable identifier for Windows so the tray icon shows up under a friendly
+# name in Settings → Personalisation → Taskbar → Other system tray icons.
+# Without this, Win11 inherits pythonw.exe's identity and the icon is either
+# unlisted or grouped under "Python". Format follows Microsoft's recommended
+# `<Company>.<Product>.<SubProduct>` shape.
+APP_USER_MODEL_ID = "CopilotGateway.Tray"
+
+
+def _set_app_user_model_id(aumid: str = APP_USER_MODEL_ID) -> None:
+    """Tag this process with an AppUserModelID so Windows can group the
+    tray icon under a stable, human-readable entry in Settings. No-op on
+    non-Windows or if shell32 isn't available (e.g., Windows Server Core)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(aumid)
+    except Exception:  # noqa: BLE001 — purely cosmetic; never block startup
+        pass
+
 # ─── Subprocess hygiene ───────────────────────────────────────────────────────
 # Plan §"Subprocess hygiene": every subprocess call in a `--noconsole`
 # PyInstaller build flashes a black cmd window unless CREATE_NO_WINDOW is set.
@@ -75,15 +95,45 @@ def _quiet_run(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
 
+def _wsl_cmd(distro: str, *args: str) -> list[str]:
+    """Build a `wsl.exe` argv that exec's `args` directly inside the named
+    distro, bypassing the user's default login-shell wrapper.
+
+    WSL ≥2.6 wraps `wsl.exe -d <distro> -- <cmd>` in the default login shell
+    (typically bash). That wrapper silently mangles POSIX scripts that depend
+    on variable assignment + later expansion in the same line — e.g.
+    `p=foo; echo $p` outputs an empty string. `--shell-type none` skips the
+    wrapper so the requested binary (sh, bash, wslpath, getent…) runs
+    directly with its own argv intact.
+
+    All `bash -ic` / `sh -lc` callers downstream still source the rc-file
+    explicitly via their `-i`/`-l` flags, so the dynamic env injection still
+    works."""
+    return ["wsl.exe", "-d", distro, "--shell-type", "none", "--", *args]
+
+
+
 def _decode_wsl_output(raw: bytes) -> str:
-    """Decode subprocess output that might be UTF-16LE (BOM-prefixed) or
-    plain UTF-8. `wsl.exe -l -q` is the only command that writes UTF-16LE
-    with a BOM (bot-triage residual #3/#8). Anything run *inside* a distro
-    via `wsl.exe -d <name> -- sh -c '...'` relays distro stdout as plain
-    UTF-8. Probing the BOM byte before attempting UTF-16 keeps codex-finding
-    `tray_app.py:81` from silently rendering UTF-8 bytes as Chinese chars."""
+    """Decode subprocess output that might be UTF-16LE (BOM-prefixed), UTF-16LE
+    *without* a BOM, or plain UTF-8.
+
+    `wsl.exe -l -q` is the noisy case — older WSL builds emit UTF-16LE with a
+    `FF FE` BOM, newer MSIX-packaged WSL builds (Win11 Store, ≥2.x) emit
+    UTF-16LE **without** a BOM. Anything run *inside* a distro via
+    `wsl.exe -d <name> -- sh -c '...'` relays distro stdout as plain UTF-8.
+
+    Without the headerless-UTF-16LE branch, distro names render with embedded
+    NULs (`U\\x00b\\x00u\\x00…`), and the pystray menu truncates at the first
+    NUL — showing single letters and unlabelled rows. Detection: sample the
+    leading bytes and check whether odd-indexed bytes are predominantly NUL,
+    which is the signature of ASCII text in UTF-16LE."""
     if raw.startswith(b"\xff\xfe"):
         return raw[2:].decode("utf-16-le", errors="replace")
+    sample = raw[: min(64, len(raw))]
+    if len(sample) >= 4:
+        odd_nuls = sum(1 for i in range(1, len(sample), 2) if sample[i] == 0)
+        if odd_nuls >= max(2, len(sample) // 4):
+            return raw.decode("utf-16-le", errors="replace")
     return raw.decode("utf-8", errors="replace")
 
 
@@ -297,8 +347,8 @@ def _probe_wsl_bridge_ip(distro: str) -> str | None:
         # `ip route show default` may return multiple lines on a VPN-active
         # box (bot-triage residual #10) — pin to first via `head -1`.
         r = _quiet_run(
-            ["wsl.exe", "-d", distro, "--",
-             "sh", "-c", "ip route show default | head -1 | awk '{print $3}'"],
+            _wsl_cmd(distro,
+             "sh", "-c", "ip route show default | head -1 | awk '{print $3}'"),
             timeout=5,
         )
     except (subprocess.TimeoutExpired, OSError):
@@ -337,8 +387,8 @@ def _resolve_static_wsl_base_url(distro: str, port: int) -> str | None:
     #    Windows-side host doesn't have an /etc/hosts entry for it).
     try:
         r = _quiet_run(
-            ["wsl.exe", "-d", distro, "--", "sh", "-c",
-             "getent hosts host.docker.internal >/dev/null 2>&1 && echo OK || true"],
+            _wsl_cmd(distro, "sh", "-c",
+             "getent hosts host.docker.internal >/dev/null 2>&1 && echo OK || true"),
             timeout=5,
         )
         if r.returncode == 0 and b"OK" in r.stdout:
@@ -637,8 +687,8 @@ def _wsl_resolve_userprofile(distro: str) -> str | None:
         return None
     try:
         r = _quiet_run(
-            ["wsl.exe", "-d", distro, "--",
-             "sh", "-c", 'wslpath -u "$USERPROFILE" 2>/dev/null'],
+            _wsl_cmd(distro,
+             "sh", "-c", 'wslpath -u "$USERPROFILE" 2>/dev/null'),
             timeout=5,
         )
     except (subprocess.TimeoutExpired, OSError):
@@ -660,10 +710,10 @@ def _wsl_detect_shell(distro: str) -> tuple[str, str]:
         return fallback
     try:
         r = _quiet_run(
-            ["wsl.exe", "-d", distro, "--",
+            _wsl_cmd(distro,
              "sh", "-c",
              "getent passwd \"$(whoami)\" 2>/dev/null "
-             "|| grep \"^$(whoami):\" /etc/passwd"],
+             "|| grep \"^$(whoami):\" /etc/passwd"),
             timeout=5,
         )
     except (subprocess.TimeoutExpired, OSError):
@@ -740,7 +790,7 @@ def enable_for_wsl(distro: str, port: int,
         mv "$rc.cg-tmp" "$rc"
     """
     try:
-        r = _quiet_run(["wsl.exe", "-d", distro, "--", "sh", "-c", rewrite_script],
+        r = _quiet_run(_wsl_cmd(distro, "sh", "-c", rewrite_script),
                        timeout=10)
     except (subprocess.TimeoutExpired, OSError) as e:
         return (False, f"wsl.exe invocation failed: {e}")
@@ -819,7 +869,7 @@ def enable_for_wsl(distro: str, port: int,
         "PY\n"
     )
     try:
-        _quiet_run(["wsl.exe", "-d", distro, "--", "sh", "-c", settings_script],
+        _quiet_run(_wsl_cmd(distro, "sh", "-c", settings_script),
                    timeout=10)
     except (subprocess.TimeoutExpired, OSError):
         pass  # Best-effort; rc-file is the load-bearing path.
@@ -856,13 +906,13 @@ def test_wsl_env(distro: str) -> tuple[bool, str]:
         return (False, "wsl.exe not on PATH.")
     shell_name, _ = _wsl_detect_shell(distro)
     if shell_name == "bash":
-        cmd = ["wsl.exe", "-d", distro, "--", "bash", "-ic", "claude --version"]
+        cmd = _wsl_cmd(distro, "bash", "-ic", "claude --version")
     elif shell_name == "zsh":
-        cmd = ["wsl.exe", "-d", distro, "--", "zsh", "-ic", "claude --version"]
+        cmd = _wsl_cmd(distro, "zsh", "-ic", "claude --version")
     elif shell_name == "fish":
-        cmd = ["wsl.exe", "-d", distro, "--", "fish", "-c", "claude --version"]
+        cmd = _wsl_cmd(distro, "fish", "-c", "claude --version")
     else:
-        cmd = ["wsl.exe", "-d", distro, "--", "sh", "-lc", "claude --version"]
+        cmd = _wsl_cmd(distro, "sh", "-lc", "claude --version")
     try:
         r = _quiet_run(cmd, timeout=15)
     except (subprocess.TimeoutExpired, OSError) as e:
@@ -1353,6 +1403,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.smoke:
         smoke()
         return 0
+
+    # Register a stable AppUserModelID BEFORE any window/icon is created.
+    # Setting it later has no effect — Windows snapshots the value when the
+    # first HWND is registered. Drives the icon's display name in Settings →
+    # Personalisation → Taskbar → Other system tray icons.
+    _set_app_user_model_id()
 
     # Pick an initial bind host. The WSL toggle, when activated at runtime,
     # would ideally re-bind the gateway — that requires a restart of the
