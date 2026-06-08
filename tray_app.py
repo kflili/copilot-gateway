@@ -75,6 +75,59 @@ def _set_app_user_model_id(aumid: str = APP_USER_MODEL_ID) -> None:
     except Exception:  # noqa: BLE001 — purely cosmetic; never block startup
         pass
 
+
+# Single-instance guard. A tray app has no taskbar window, so Windows won't
+# stop a second launch (from Desktop / Start / taskbar pin) — without this each
+# click would stack another tray icon + try to re-attach the gateway. A named
+# mutex is the canonical Win32 single-instance primitive; the handle is parked
+# in a module global so it lives for the whole process (closing it would free
+# the name and let a later launch think nothing is running).
+_SINGLE_INSTANCE_MUTEX_NAME = "CopilotGateway.Tray.SingleInstance"
+_single_instance_handle = None
+
+
+def _acquire_single_instance() -> bool:
+    """Return True if this is the first/only tray instance, False if another is
+    already running. Windows-only; always True elsewhere (mutex namespace is
+    win32-specific and the duplicate-launch problem is a Windows-shell one)."""
+    global _single_instance_handle
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        ERROR_ALREADY_EXISTS = 183
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL,
+                                          wintypes.LPCWSTR]
+        _single_instance_handle = kernel32.CreateMutexW(
+            None, True, _SINGLE_INSTANCE_MUTEX_NAME)
+        return kernel32.GetLastError() != ERROR_ALREADY_EXISTS
+    except Exception:  # noqa: BLE001 — if the guard itself fails, don't block.
+        return True
+
+
+def _notify_already_running() -> None:
+    """Tell the user the tray is already up (the existing instance owns the tray
+    icon, so the duplicate launch can't show a balloon — a short message box is
+    the clearest cross-process signal). No-op if user32 is unavailable."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        MB_OK = 0x0
+        MB_ICONINFORMATION = 0x40
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            "Copilot Gateway is already running.\n\n"
+            "Look for its icon in the system tray (bottom-right, near the "
+            "clock). Click the \u25b2 arrow if it's hidden.",
+            "Copilot Gateway",
+            MB_OK | MB_ICONINFORMATION)
+    except Exception:  # noqa: BLE001
+        pass
+
 # ─── Subprocess hygiene ───────────────────────────────────────────────────────
 # Plan §"Subprocess hygiene": every subprocess call in a `--noconsole`
 # PyInstaller build flashes a black cmd window unless CREATE_NO_WINDOW is set.
@@ -982,15 +1035,54 @@ def format_title(snap: dict | None) -> str:
 # ─── Tkinter UI helpers ───────────────────────────────────────────────────────
 
 
-def _build_tray_icon_image():
-    """Return a Pillow Image for the tray icon. Kept tiny so this file stays
-    runnable when Pillow is unavailable (smoke mode)."""
-    from PIL import Image, ImageDraw
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+def _build_tray_icon_image(size: int = 64):
+    """Return a Pillow Image for the tray icon: a dark navy rounded square with
+    a bold yellow lightning bolt and a small "CG" label, mirroring the macOS
+    menu-bar / app icon. Rendered at 4x then downsampled for clean antialiased
+    edges. Kept dependency-light so this file stays runnable when Pillow is
+    unavailable (smoke mode)."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    scale = 4
+    s = size * scale
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.ellipse((4, 4, 60, 60), fill=(20, 120, 200, 255))
-    d.text((20, 18), "CG", fill=(255, 255, 255, 255))
-    return img
+
+    # Rounded-square background — dark navy, like the Mac icon.
+    margin = int(s * 0.06)
+    radius = int(s * 0.22)
+    d.rounded_rectangle((margin, margin, s - margin, s - margin),
+                        radius=radius, fill=(20, 34, 60, 255))
+
+    # Bold lightning bolt, bright yellow. Coordinates are a 0..1 unit bolt
+    # scaled to the canvas so it stays centred at any size.
+    bolt_unit = [
+        (0.560, 0.130), (0.300, 0.560), (0.460, 0.560),
+        (0.380, 0.870), (0.720, 0.430), (0.545, 0.430),
+    ]
+    bolt = [(x * s, y * s) for (x, y) in bolt_unit]
+    d.polygon(bolt, fill=(255, 205, 30, 255))
+
+    # "CG" label centred near the bottom.
+    label = "CG"
+    font = None
+    for fname in ("arialbd.ttf", "arial.ttf", "DejaVuSans-Bold.ttf"):
+        try:
+            font = ImageFont.truetype(fname, int(s * 0.16))
+            break
+        except OSError:
+            continue
+    if font is None:
+        font = ImageFont.load_default()
+    try:
+        bbox = d.textbbox((0, 0), label, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        d.text(((s - tw) / 2 - bbox[0], int(s * 0.78) - bbox[1]),
+               label, fill=(210, 224, 245, 255), font=font)
+    except Exception:  # noqa: BLE001 — never let label rendering break the icon
+        pass
+
+    return img.resize((size, size), Image.LANCZOS)
 
 
 def _raise_to_front(win):
@@ -1402,6 +1494,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.smoke:
         smoke()
+        return 0
+
+    # Single-instance guard: if a tray is already running, surface it and bow
+    # out instead of stacking a duplicate icon. Runs before any gateway spawn
+    # or window creation so a double-launch is a cheap no-op.
+    if not _acquire_single_instance():
+        _notify_already_running()
         return 0
 
     # Register a stable AppUserModelID BEFORE any window/icon is created.
