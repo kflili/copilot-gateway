@@ -1117,6 +1117,10 @@ def main():
     # the tray then saw "gateway not reachable". Force UTF-8 with a lossy
     # fallback so banner prints can never crash startup.
     for _stream in (sys.stdout, sys.stderr):
+        # In GUI/windowed contexts (pythonw.exe, some frozen exes) std streams
+        # can be None — skip explicitly rather than lean on the except below.
+        if _stream is None:
+            continue
         try:
             _stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, OSError, ValueError):
