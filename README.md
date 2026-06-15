@@ -1,16 +1,16 @@
 # Copilot LLM Gateway
 
-A local LLM API gateway that lets **any product** access GitHub Copilot's models (Claude Opus/Sonnet, GPT-5.4, Gemini, MiniMax, Goldeneye, etc.) using standard OpenAI or Anthropic SDK formats. Clients connect with a dummy API key — the gateway handles all GitHub auth automatically. Tracks token usage and shows live stats in the macOS menu bar.
+A local LLM API gateway that lets **any product** access GitHub Copilot's models (Claude Opus/Sonnet, GPT-5.5, Gemini, etc.) using standard OpenAI or Anthropic SDK formats. Clients connect with a dummy API key — the gateway handles all GitHub auth automatically. Tracks token usage and shows live stats in the macOS menu bar.
 
 ## Why
 
-GitHub Copilot subscription (via employee/enterprise plan) includes access to all major models — Claude Opus 4.6 (1M context), GPT-5.4, Gemini 3.1 Pro, etc. But the official Copilot CLI wraps these behind its own prompt system, agent framework, and tool layer. This gateway **bypasses the CLI** and gives direct model access, so any product can send prompts and get responses — like a self-hosted LLM provider backed by your Copilot subscription.
+GitHub Copilot subscription (via employee/enterprise plan) includes access to all major models — Claude Opus 4.8 (1M context), GPT-5.5, Gemini 3.1 Pro, etc. But the official Copilot CLI wraps these behind its own prompt system, agent framework, and tool layer. This gateway **bypasses the CLI** and gives direct model access, so any product can send prompts and get responses — like a self-hosted LLM provider backed by your Copilot subscription.
 
 ## Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  Claude Code    │    │  AionUI         │    │  Any App/Bot    │
+│  Claude Code    │    │  OpenAI Client  │    │  Any App/Bot    │
 │  (Anthropic SDK)│    │  (OpenAI SDK)   │    │  (curl/fetch)   │
 └───────┬─────────┘    └───────┬─────────┘    └───────┬─────────┘
         │ api_key="dummy"      │ api_key="dummy"      │
@@ -37,9 +37,9 @@ GitHub Copilot subscription (via employee/enterprise plan) includes access to al
               │          .com               │
               │                             │
               │  Claude Opus/Sonnet (1M)    │
-              │  GPT-5.4 / GPT-5.2         │
+              │  GPT-5.5 / GPT-5.4         │
               │  Gemini 3.1 Pro             │
-              │  MiniMax, Goldeneye         │
+              │  GPT-5 Codex, Flash         │
               └──────────────────────────────┘
 ```
 
@@ -136,9 +136,9 @@ The gateway supports two modes. **Same API URL**, different tokens and headers =
 |---|---|---|
 | **Token source** | `gh auth token` | OAuth device flow (saved to `.gateway-token.json`) |
 | **Integration ID header** | `copilot-developer-cli` | `vscode-chat` |
-| **Callable models** | 19 | 22 |
+| **Callable models** | 20 | 20 |
 | **Re-auth needed?** | Never (uses gh) | Never (token persisted) |
-| **Unique models** | — | Gemini 3.1 Pro, Fireworks routers |
+| **Unique models** | `gpt-5.4-nano` | `trajectory-compaction` |
 | **Startup** | `python3 gateway.py --mode cli` | `python3 gateway.py --mode vscode` |
 
 Both modes use the same API URL (`api.enterprise.githubcopilot.com`) and the same enterprise plan/quota.
@@ -151,36 +151,35 @@ The server controls model access via this header, not just the token. Without it
 
 ## Available Models
 
-### CLI Mode (19 callable, `copilot-developer-cli`)
+Both auth modes expose **20 callable models** — 19 shared, plus one unique to each:
+`gpt-5.4-nano` (CLI only) and `trajectory-compaction` (VS Code only). The table below
+lists the practically useful ones; several internal/preview reasoning variants are also
+callable (`claude-opus-4.7-high`, `claude-opus-4.7-xhigh`, `claude-opus-4.7-1m-internal`,
+`mai-code-1-flash-internal`). Run `curl http://localhost:8787/v1/models` for the full,
+always-authoritative live list with capabilities.
 
-| Model | Endpoint | Format |
-|-------|----------|--------|
-| `claude-opus-4.6` | `/v1/messages` | Anthropic Messages API |
-| `claude-opus-4.6-1m` | `/v1/messages` | Anthropic Messages API (1M context) |
-| `claude-sonnet-4.6` | `/v1/messages` | Anthropic Messages API |
-| `claude-sonnet-4.5` | `/v1/messages` | Anthropic Messages API |
-| `claude-opus-4.5` | `/v1/messages` | Anthropic Messages API |
-| `claude-haiku-4.5` | `/v1/messages` | Anthropic Messages API |
-| `claude-sonnet-4` | `/v1/messages` | Anthropic Messages API |
-| `gpt-5.4` | `/v1/responses` | OpenAI Responses API |
-| `gpt-5.4-mini` | `/v1/responses` | OpenAI Responses API |
-| `gpt-5.2` | `/chat/completions` | OpenAI Chat API |
-| `gpt-5.1` | `/chat/completions` | OpenAI Chat API |
-| `gpt-5-mini` | `/chat/completions` | OpenAI Chat API |
-| `goldeneye` | `/v1/responses` | OpenAI Responses API |
-| `minimax-m2.5` | `/chat/completions` | OpenAI Chat API |
+| Model | Endpoint | Format | Mode | Context |
+|-------|----------|--------|------|---------|
+| `claude-opus-4.8` | `/v1/messages` | Anthropic Messages API | Both | 1M (current default) |
+| `claude-opus-4.7` | `/v1/messages` | Anthropic Messages API | Both | 1M |
+| `claude-opus-4.6` | `/v1/messages` | Anthropic Messages API | Both | 1M |
+| `claude-sonnet-4.6` | `/v1/messages` | Anthropic Messages API | Both | 1M |
+| `claude-sonnet-4.5` | `/v1/messages` | Anthropic Messages API | Both | 200K |
+| `claude-opus-4.5` | `/v1/messages` | Anthropic Messages API | Both | 200K |
+| `claude-haiku-4.5` | `/v1/messages` | Anthropic Messages API | Both | 200K |
+| `gpt-5.5` | `/v1/responses` | OpenAI Responses API | Both | 1.05M |
+| `gpt-5.4` | `/v1/responses` | OpenAI Responses API | Both | 1.05M |
+| `gpt-5.4-mini` | `/v1/responses` | OpenAI Responses API | Both | 400K |
+| `gpt-5.4-nano` | `/v1/responses` | OpenAI Responses API | CLI only | 400K |
+| `gpt-5.3-codex` | `/v1/responses` | OpenAI Responses API | Both | 400K |
+| `gpt-5-mini` | `/v1/responses` | OpenAI Responses API | Both | 264K |
+| `gemini-3.1-pro-preview` | `/chat/completions` | OpenAI Chat API | Both | 1M |
+| `gemini-3.5-flash` | `/chat/completions` | OpenAI Chat API | Both | 1M |
+| `trajectory-compaction` | `/chat/completions` | OpenAI Chat API | VS Code only | 262K |
 
-Note: The actual Copilot CLI shows only 18 models — it has a hardcoded allowlist (`WT` in app.js) that filters out `goldeneye` and `minimax-m2.5` even though the API makes them available.
-
-### VS Code Mode (22 callable, `vscode-chat`, requires VS Code OAuth token)
-
-All CLI models plus:
-- `gemini-3.1-pro-preview` — Google Gemini 3.1 Pro
-- `gpt-5.1-codex-mini` — OpenAI GPT-5.1 Codex Mini
-- `accounts/msft/routers/mp3yn0h7` — Fireworks router
-- `accounts/msft/routers/yaqq2gxh` — Fireworks router
-
-Run `curl http://localhost:8787/v1/models` for the full live list with capabilities.
+The gateway routes each model by its upstream `supported_endpoints` (Claude → Anthropic
+Messages, GPT-5.x → Responses, Gemini → Chat Completions), so a client can also reach any
+model through the OpenAI-format paths.
 
 ## Client Configuration
 
@@ -190,7 +189,7 @@ Run `curl http://localhost:8787/v1/models` for the full live list with capabilit
 from anthropic import Anthropic
 client = Anthropic(auth_token="dummy", base_url="http://localhost:8787")
 msg = client.messages.create(
-    model="claude-opus-4.6-1m",  # 1M context!
+    model="claude-opus-4.8",  # native 1M context
     max_tokens=4096,
     messages=[{"role": "user", "content": "Hello!"}],
 )
@@ -240,28 +239,18 @@ Or use the `cgcx` alias (above). Picks up the model from `~/.codex/config.toml` 
 
 The 405 response itself completes in <1 s. The user-observable delay on the first `cgcx` prompt is ~5 s end-to-end, since the CLI also does its WebSocket-handshake setup and HTTPS-transport reconnect on top of the round-trip. Every subsequent prompt in the same session goes directly over HTTPS POST with no overhead. The 405 response is intentional — the `do_GET` handler for `/v1/responses` in `gateway.py` rejects the WebSocket upgrade cleanly so the CLI falls back immediately instead of running its full retry loop (which would take 1-2 min).
 
-### AionUi (Auto-detection)
-
-AionUi automatically detects the gateway when spawning Claude Code sessions (both Rich UI and Terminal modes). No manual configuration needed — just start the gateway and launch a Claude session in AionUi.
-
-**How it works:** Before each Claude spawn, AionUi probes `http://localhost:8787/health` (300ms timeout). If the gateway responds with `{"status":"ok"}`, it injects `ANTHROPIC_BASE_URL` and a dummy auth token into the spawned process. If the gateway isn't running, Claude uses the default API path.
-
-**Settings toggle:** In AionUi, go to **Settings → Agent CLI → Copilot Gateway** to enable/disable auto-detection (enabled by default).
-
-**Known limitation:** The Copilot API does not support Anthropic's `context_management` (server-side compaction) feature. The gateway automatically strips this field from requests. Claude Code handles context management client-side, so this has no practical impact.
-
 ### curl
 
 ```bash
 # Anthropic format
 curl http://localhost:8787/v1/messages \
   -H "Content-Type: application/json" \
-  -d '{"model":"claude-opus-4.6-1m","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"model":"claude-opus-4.8","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}'
 
 # OpenAI format
 curl http://localhost:8787/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"gpt-5.2","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"model":"gpt-5-mini","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}'
 
 # GPT-5.4 (Responses API)
 curl http://localhost:8787/v1/responses \
@@ -282,7 +271,7 @@ curl http://localhost:8787/v1/messages \
 | `POST` | `/v1/messages` | Anthropic Messages API (Claude models) |
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions API |
 | `POST` | `/chat/completions` | OpenAI Chat Completions (alias) |
-| `POST` | `/v1/responses` | OpenAI Responses API (GPT-5.4, Goldeneye) |
+| `POST` | `/v1/responses` | OpenAI Responses API (GPT-5.x) |
 | `GET` | `/health` | Health check with token/upstream/mode/request count |
 | `GET` | `/stats` | Token usage stats (requests, tokens, per-model breakdown) |
 | `GET` | `/logs` | Recent gateway log lines (text, ?n=100 for line count) |
@@ -504,8 +493,9 @@ directories (`.venv\`, `build\`, `dist\`) are gitignored.
 - Requires active GitHub Copilot subscription (enterprise plan tested)
 - Premium models (Opus 6x, Opus-1M 6x, GPT-5.4 1x) consume premium request quota
 - `gho_*` OAuth tokens are long-lived but can be revoked — run `--login` to re-auth
-- The Copilot CLI has a hardcoded model allowlist that hides some API-available models (goldeneye, minimax-m2.5)
+- The Copilot CLI applies a hardcoded model allowlist that can hide some API-available models from its own UI; the gateway still exposes them
 - Rate limits are per your Copilot plan (enterprise = unlimited for this user)
 - Gemini 3 Pro was deprecated March 26, 2026; replaced by Gemini 3.1 Pro (VS Code mode only)
+- The Copilot API does not support Anthropic's `context_management` (server-side compaction); the gateway strips this field from requests. Claude Code handles context management client-side, so there's no practical impact.
 - **Server-side tool asymmetry**: Copilot honors OpenAI's `web_search` server tool on `/v1/responses` for GPT-5.x but rejects Anthropic's `web_search_20250305` on `/v1/messages` for Claude. See `docs/api-shapes-reference.md` § *Built-in server tools*. Workaround for Claude Code: invoke the `gpt` skill (copilot CLI) for ad-hoc web research instead of relying on Anthropic's `WebSearch`.
 - **Codex CLI WebSocket fallback**: First prompt of each `cgcx` session shows a one-time `Falling back from WebSockets to HTTPS transport` message and ~5s delay. The Codex CLI tries WebSocket transport at `/v1/responses` first; the gateway returns `405 Method Not Allowed` to force immediate fallback. Subsequent prompts in the same session are direct HTTPS POST with no overhead.
