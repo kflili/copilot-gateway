@@ -97,7 +97,7 @@ def setup_logging() -> pathlib.Path:
         level=logging.DEBUG,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler(session_dir / "gateway.log"),
+            logging.FileHandler(session_dir / "gateway.log", encoding="utf-8"),
             logging.StreamHandler(sys.stdout),
         ],
     )
@@ -1108,6 +1108,24 @@ def _load_token() -> tuple[str, str] | tuple[None, None]:
 
 def main():
     global token_mgr, request_stats
+
+    # Windows / redirected-pipe safety: when stdout is piped to a file or
+    # DEVNULL (the tray spawns us with stdout=stderr=DEVNULL), Python falls
+    # back to the locale codec (cp1252 on Windows), which can't encode the
+    # Unicode box-drawing characters in the startup banner. That raised
+    # UnicodeEncodeError and killed the gateway before it bound the port —
+    # the tray then saw "gateway not reachable". Force UTF-8 with a lossy
+    # fallback so banner prints can never crash startup.
+    for _stream in (sys.stdout, sys.stderr):
+        # In GUI/windowed contexts (pythonw.exe, some frozen exes) std streams
+        # can be None — skip explicitly rather than lean on the except below.
+        if _stream is None:
+            continue
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
     import argparse
     parser = argparse.ArgumentParser(description="Copilot LLM Gateway")
     parser.add_argument("--port", type=int, default=LISTEN_PORT)
