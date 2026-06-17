@@ -175,14 +175,16 @@ class TokenManager:
 
     def refresh(self) -> str:
         with self._refresh_cv:
-            now = time.time()
-            if now - self._last_refresh < self._min_refresh_interval:
-                return self._token
             if self._refreshing:
-                # Another thread owns the refresh slot; wait for it and reuse its
-                # token rather than firing a second upstream call (herd collapse).
+                # A refresh is in flight — wait for it and reuse its fresh token
+                # rather than returning one that is mid-refresh. Checking _refreshing
+                # BEFORE the throttle is what makes a concurrent caller reuse the
+                # refreshed value instead of the stale token (single-flight).
                 self._refresh_cv.wait_for(lambda: not self._refreshing, timeout=20)
                 return self._token
+            now = time.time()
+            if now - self._last_refresh < self._min_refresh_interval:
+                return self._token          # no refresh in flight + recently refreshed → current token is fresh
             # Claim the slot, then release the lock before the network round-trip.
             self._refreshing = True
             self._last_refresh = now
