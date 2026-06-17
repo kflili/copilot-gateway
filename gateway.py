@@ -253,23 +253,35 @@ class TokenManager:
             log(f"copilot_internal/user failed: {e}")
 
     def _refresh_jwt(self):
-        # Single-flight, lock-free upstream call (mirrors refresh()): claim the
-        # slot under the lock, then exchange the JWT WITHOUT holding it.
-        with self._refresh_cv:
-            if self._refreshing:
-                # A refresh is already in flight; wait for its fresh token.
-                self._refresh_cv.wait_for(lambda: not self._refreshing, timeout=20)
-                return
-            # Double-check expiry — another thread may have just refreshed.
-            if self._jwt_expires > 0 and time.time() <= self._jwt_expires - 60:
-                return
-            self._refreshing = True
-        try:
-            self._refresh_jwt_inner()
-        finally:
+        # Single-flight, lock-free upstream JWT exchange. After waiting for OR
+        # performing a refresh, re-check freshness and retry if the token is still
+        # expired — a refresh that failed must not leave the caller of .token holding
+        # a stale token that 401s the next request (gemini #15). Bounded to 2 own
+        # attempts so a persistently-failing exchange can't spin; the inner exchange
+        # also sets _jwt_exchange_failed on failure, which exits the loop immediately.
+        attempts = 0
+        while True:
             with self._refresh_cv:
-                self._refreshing = False
-                self._refresh_cv.notify_all()
+                if self._jwt_exchange_failed:
+                    return                      # JWT disabled; raw token in use
+                if self._jwt_expires > 0 and time.time() <= self._jwt_expires - 60:
+                    return                      # fresh — we or another thread refreshed
+                if self._refreshing:
+                    # Another thread is refreshing; wait, then re-check freshness above.
+                    if not self._refresh_cv.wait_for(lambda: not self._refreshing, timeout=20):
+                        return                  # refresher stuck >20s; caller retries
+                    continue
+                if attempts >= 2:
+                    return                      # gave it our best effort; avoid spinning
+                self._refreshing = True         # token still due, nobody refreshing → claim
+            attempts += 1
+            try:
+                self._refresh_jwt_inner()
+            finally:
+                with self._refresh_cv:
+                    self._refreshing = False
+                    self._refresh_cv.notify_all()
+            # loop: re-check freshness; retry our own refresh if it left the token stale
 
     def _refresh_jwt_inner(self):
         """Exchange GitHub token for Copilot JWT."""
