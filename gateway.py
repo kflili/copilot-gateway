@@ -142,6 +142,11 @@ class TokenManager:
         self._token: str = ""
         self._gh_token: str = ""  # raw GitHub OAuth token (for JWT exchange)
         self._lock = threading.Lock()
+        # _refresh_cv wraps _lock so callers can wait for an in-flight refresh
+        # instead of firing a duplicate upstream call (herd collapse). The
+        # upstream round-trip itself runs WITHOUT the lock held — see refresh().
+        self._refresh_cv = threading.Condition(self._lock)
+        self._refreshing = False  # True while one thread performs the upstream refresh
         self._last_refresh: float = 0
         self._min_refresh_interval = 30
         self._jwt_expires: float = 0
@@ -159,13 +164,34 @@ class TokenManager:
             self._refresh_jwt()
         return self._token
 
+    def has_token(self) -> bool:
+        """Lock-free, refresh-free liveness read for /health.
+
+        Returns whether a token is currently cached without acquiring _lock or
+        triggering a refresh, so the health probe never blocks behind an
+        in-flight upstream refresh. Reports last-known cached state.
+        """
+        return bool(self._token)
+
     def refresh(self) -> str:
-        with self._lock:
+        with self._refresh_cv:
             now = time.time()
             if now - self._last_refresh < self._min_refresh_interval:
                 return self._token
+            if self._refreshing:
+                # Another thread owns the refresh slot; wait for it and reuse its
+                # token rather than firing a second upstream call (herd collapse).
+                self._refresh_cv.wait_for(lambda: not self._refreshing, timeout=20)
+                return self._token
+            # Claim the slot, then release the lock before the network round-trip.
+            self._refreshing = True
             self._last_refresh = now
 
+        # Upstream work runs WITHOUT _lock held, so concurrent /health probes and
+        # throttled callers never block behind this network round-trip. Each write
+        # below is a single atomic attribute rebind, so a concurrent reader of
+        # .token always sees a complete (old or new) token, never a torn one.
+        try:
             # Resolve the GitHub OAuth token
             self._gh_token = self._resolve_gh_token()
 
@@ -181,8 +207,12 @@ class TokenManager:
                     self._token = self._gh_token
             else:
                 self._token = self._gh_token
+        finally:
+            with self._refresh_cv:
+                self._refreshing = False
+                self._refresh_cv.notify_all()
 
-            return self._token
+        return self._token
 
     def _resolve_gh_token(self) -> str:
         # Try env vars first
@@ -223,8 +253,23 @@ class TokenManager:
             log(f"copilot_internal/user failed: {e}")
 
     def _refresh_jwt(self):
-        with self._lock:
+        # Single-flight, lock-free upstream call (mirrors refresh()): claim the
+        # slot under the lock, then exchange the JWT WITHOUT holding it.
+        with self._refresh_cv:
+            if self._refreshing:
+                # A refresh is already in flight; wait for its fresh token.
+                self._refresh_cv.wait_for(lambda: not self._refreshing, timeout=20)
+                return
+            # Double-check expiry — another thread may have just refreshed.
+            if self._jwt_expires > 0 and time.time() <= self._jwt_expires - 60:
+                return
+            self._refreshing = True
+        try:
             self._refresh_jwt_inner()
+        finally:
+            with self._refresh_cv:
+                self._refreshing = False
+                self._refresh_cv.notify_all()
 
     def _refresh_jwt_inner(self):
         """Exchange GitHub token for Copilot JWT."""
@@ -250,7 +295,12 @@ class TokenManager:
             self._token = self._gh_token
 
     def force_refresh(self) -> str:
-        with self._lock:
+        with self._refresh_cv:
+            if self._refreshing:
+                # Wait for the in-flight refresh instead of racing it; its new
+                # token is exactly what the 401 retry path needs.
+                self._refresh_cv.wait_for(lambda: not self._refreshing, timeout=20)
+                return self._token
             self._last_refresh = 0
         return self.refresh()
 
@@ -318,6 +368,14 @@ class ModelsCache:
             if time.time() - self._last_fetch > self._ttl:
                 self._fetch()
             return self._data
+
+    def count_cached(self) -> int:
+        """Lock-free, refresh-free count of the last-known model list.
+
+        Used by /health so the probe reports cached model count without
+        acquiring _lock or triggering an upstream fetch.
+        """
+        return len(self._data)
 
     def _fetch(self):
         try:
@@ -675,13 +733,17 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
     # ── /health ──
 
     def _handle_health(self):
+        # Liveness probe: read only local cached state — no _lock acquisition and
+        # no upstream call — so /health stays fast (<100ms) even while a token or
+        # models refresh is in flight. token_present/models_cached report
+        # last-known cached state, which is the correct semantics for "am I up?".
         health = {
             "status": "ok",
             "version": GATEWAY_VERSION,
             "upstream": _get_upstream(),
             "mode": token_mgr.mode if token_mgr else "?",
-            "models_cached": len(models_cache.get()),
-            "token_present": bool(token_mgr.token),
+            "models_cached": models_cache.count_cached(),
+            "token_present": token_mgr.has_token() if token_mgr else False,
         }
         if request_stats:
             snap = request_stats.snapshot()
