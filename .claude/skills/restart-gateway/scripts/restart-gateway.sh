@@ -21,7 +21,12 @@
 set -uo pipefail
 
 GW_PORT="${GW_PORT:-8787}"
-GW_PROC_PATTERN="${GW_PROC_PATTERN:-gateway.py --port ${GW_PORT}}"
+# pgrep/pkill -f treat this as an extended regex matched against the full argv.
+# `gateway\.py.*--port N` tolerates intervening flags (e.g. tray_app.py spawns
+# `gateway.py --host <host> --port <port>`, while CopilotGateway.app spawns
+# `gateway.py --port <port>` with no --host) — only the universally-portable `.`
+# and `*` operators, never `lsof -ti:PORT | head -1` (which can hit the wrapper).
+GW_PROC_PATTERN="${GW_PROC_PATTERN:-gateway\.py.*--port ${GW_PORT}}"
 GW_HEALTH_URL="${GW_HEALTH_URL:-http://127.0.0.1:${GW_PORT}/health}"
 GW_WAIT_SECS="${GW_WAIT_SECS:-30}"
 
