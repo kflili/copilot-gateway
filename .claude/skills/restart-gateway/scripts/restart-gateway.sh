@@ -159,7 +159,7 @@ if is_fresh "$NEW" "$NEW_START"; then
   exit 0
 fi
 
-if [ -n "$NEW" ] && [ "$NEW" = "$OLD" ] && [ "$NEW_START" = "$OLD_START" ]; then
+if [ -n "$NEW" ] && [ "$NEW" = "$OLD" ] && [ -n "$NEW_START" ] && [ -n "$OLD_START" ] && [ "$NEW_START" = "$OLD_START" ]; then
   log "WARNING: :${GW_PORT} answers ok but the process is UNCHANGED (pid ${NEW}, same start time) — the OLD process is likely orphaned and still serving STALE code (did the kill hit the app wrapper instead of the python child?). Recover manually:"
   log "  pkill -9 -f -- '${GW_PROC_PATTERN}' ; ${GW_RELAUNCH_CMD}"
   exit 2
