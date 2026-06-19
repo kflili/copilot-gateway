@@ -30,9 +30,15 @@ GW_WAIT_SECS="${GW_WAIT_SECS:-30}"
 # root is four levels up. Keeps the helper portable to any clone location.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+# Shell-escape the path before embedding it in the default commands: those run
+# through `eval` (needed so an env-supplied GW_*_CMD can carry shell syntax like
+# `&&`, `>>`, `& disown`), and bare ${REPO_ROOT} under eval would re-interpret a
+# path containing spaces or metacharacters ($(), backticks) — printf %q makes it
+# a single literal token. No-op for ordinary paths.
+SAFE_REPO_ROOT="$(printf '%q' "$REPO_ROOT")"
 
-GW_RELAUNCH_CMD="${GW_RELAUNCH_CMD:-open \"${REPO_ROOT}/CopilotGateway.app\"}"
-GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-cd \"${REPO_ROOT}\" && mkdir -p logs && nohup python3 gateway.py --port ${GW_PORT} >> logs/gateway-console.log 2>&1 & disown}"
+GW_RELAUNCH_CMD="${GW_RELAUNCH_CMD:-open ${SAFE_REPO_ROOT}/CopilotGateway.app}"
+GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-cd ${SAFE_REPO_ROOT} && mkdir -p logs && nohup python3 gateway.py --port ${GW_PORT} >> logs/gateway-console.log 2>&1 & disown}"
 
 log()  { printf '%s\n' "$*" >&2; }
 
