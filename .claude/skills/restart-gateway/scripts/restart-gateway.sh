@@ -68,8 +68,11 @@ GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-cd ${SAFE_REPO_ROOT} && mkdir -p logs && noh
 # helper signal its own (or the caller's) shell. `--` stops pgrep/pkill parsing a
 # pattern that begins with `-` as an option.
 target_pids() { pgrep -f -- "$GW_PROC_PATTERN" 2>/dev/null | grep -vFx -e "$$" -e "$PPID" || true; }
-# Newest surviving match (highest pid; after the kill the old one is gone, so this
-# resolves to the freshly-relaunched process), or empty.
+# Pick one surviving match by highest pid. This is read AFTER the kill step
+# (TERM→KILL) has cleared the old matches, so in the normal flow the sole
+# surviving match IS the freshly-relaunched process; the highest-pid pick is just
+# a deterministic tiebreak. It does NOT assume pid order tracks recency (pid reuse
+# can break that) — is_fresh's start-time arm is what actually proves a reload.
 proc_pid()    { target_pids | sort -n | tail -n1; }
 proc_start()  { local p="${1:-}"; [ -n "$p" ] && ps -o lstart= -p "$p" 2>/dev/null | tr -s ' ' || true; }
 
