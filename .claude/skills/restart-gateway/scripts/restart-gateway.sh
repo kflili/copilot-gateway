@@ -60,8 +60,17 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 # a single literal token. No-op for ordinary paths.
 SAFE_REPO_ROOT="$(printf '%q' "$REPO_ROOT")"
 
-GW_RELAUNCH_CMD="${GW_RELAUNCH_CMD:-open ${SAFE_REPO_ROOT}/CopilotGateway.app}"
-GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-cd ${SAFE_REPO_ROOT} && mkdir -p logs && nohup python3 gateway.py --port ${GW_PORT} >> logs/gateway-console.log 2>&1 & disown}"
+# Default relaunch: prefer the supervised menu-bar app when its bundle is present;
+# otherwise launch the python directly, so a fresh clone / non-mac setup (no .app)
+# doesn't sit down for half the wait budget before the fallback fires. Both the
+# no-app relaunch and the fallback reuse the same python-launch string. (All eval'd.)
+GW_PY_LAUNCH="cd ${SAFE_REPO_ROOT} && mkdir -p logs && nohup python3 gateway.py --port ${GW_PORT} >> logs/gateway-console.log 2>&1 & disown"
+if [ -d "${REPO_ROOT}/CopilotGateway.app" ]; then
+  GW_RELAUNCH_CMD="${GW_RELAUNCH_CMD:-open ${SAFE_REPO_ROOT}/CopilotGateway.app}"
+else
+  GW_RELAUNCH_CMD="${GW_RELAUNCH_CMD:-${GW_PY_LAUNCH}}"
+fi
+GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-${GW_PY_LAUNCH}}"
 
 # Target pids = processes matching the pattern, EXCLUDING this script ($$) and
 # its parent shell ($PPID), so a broad GW_PROC_PATTERN override can never make the
@@ -86,7 +95,9 @@ is_fresh()    { local pid="$1" start="$2"; [ -n "$pid" ] && { [ "$pid" != "$OLD"
 # (the repo health contract is status+version, per tray_app.py) — guards against
 # an unrelated service on the port answering a bare status:ok.
 health_ok()   { local b; b="$(curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null)" || return 1; printf '%s' "$b" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' && printf '%s' "$b" | grep -q '"version"[[:space:]]*:'; }
-health_body() { curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null || true; }
+# health_body is for the diagnostic log only — no -f, so a non-2xx body (e.g. a
+# 404/500 from some other service squatting the port) is still captured and shown.
+health_body() { curl -sS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null || true; }
 
 OLD="$(proc_pid)"
 OLD_START="$(proc_start "$OLD")"
