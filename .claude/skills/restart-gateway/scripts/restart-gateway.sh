@@ -32,7 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 
 GW_RELAUNCH_CMD="${GW_RELAUNCH_CMD:-open \"${REPO_ROOT}/CopilotGateway.app\"}"
-GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-cd \"${REPO_ROOT}\" && nohup python3 gateway.py --port ${GW_PORT} >> logs/gateway-console.log 2>&1 & disown}"
+GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-cd \"${REPO_ROOT}\" && mkdir -p logs && nohup python3 gateway.py --port ${GW_PORT} >> logs/gateway-console.log 2>&1 & disown}"
 
 log()  { printf '%s\n' "$*" >&2; }
 
@@ -50,7 +50,7 @@ log "old pid=${OLD:-<none>} start='${OLD_START:-<none>}'"
 # 1. Graceful kill by pattern (TERM); escalate to KILL if still alive after ~5s.
 if [ -n "$OLD" ]; then
   pkill -f "$GW_PROC_PATTERN" || true
-  for _ in $(seq 1 10); do
+  for _ in {1..10}; do
     pgrep -f "$GW_PROC_PATTERN" >/dev/null || break
     sleep 0.5
   done
