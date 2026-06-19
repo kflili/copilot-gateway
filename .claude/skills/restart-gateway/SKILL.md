@@ -1,0 +1,30 @@
+---
+name: restart-gateway
+description: "Restart the local copilot-gateway to load updated gateway.py from disk, safely, without leaving :8787 down."
+---
+
+# restart-gateway
+
+**Mission**: Reload `gateway.py` from disk = restart the python child that binds `:8787`, without ever leaving the port down.
+
+**When**: After merging or editing `gateway.py`; when the running gateway is serving stale code; the CLI equivalent of quit + reopen the menu-bar icon.
+
+**How**: Run the bundled helper — ONE blocking step:
+
+```
+.claude/skills/restart-gateway/scripts/restart-gateway.sh
+```
+
+It does kill → relaunch → health-wait in a single command. A gateway-routed caller (cgcc / cmux Claude) routes its own inference through `:8787`, so one blocking run means the caller's next request only fires once `:8787` is healthy again (the self-restart paradox below).
+
+**Process model**: `python3 <repo>/gateway.py --port 8787` (binds `127.0.0.1:8787`), launched and supervised as a child of the menu-bar app `<repo>/CopilotGateway.app`.
+
+**Pitfalls** (the load-bearing knowledge):
+- Kill the python **by command name** (`pkill -f 'gateway.py --port 8787'`), NEVER `lsof -ti:8787 | head -1`. `:8787` is held by BOTH the app wrapper and the python child; `head -1` can return the **app** pid — killing the supervisor while orphaning the old python, which keeps serving STALE code while `/health` still lies `ok`.
+- Proof of a real reload is a **FRESH pid / start time** (and reset `requests`/`tokens` counters), NOT `/health ok` alone — an orphaned old process answers `ok` too.
+- **Self-restart paradox**: when the caller routes through `:8787`, do kill+relaunch+health-wait as ONE blocking command so the caller recovers before it returns.
+- **Never leave `:8787` down**: the helper fires a one-shot fallback relaunch at half the wait budget and exits non-zero with a loud manual-recovery hint if it can't bring the port back.
+
+**Verify**: `/health` returns `status: ok` AND a new pid / start time. The helper checks both and exits 0 only when both hold; exit 2 means the port answers ok but the pid is unchanged (suspected orphan), exit 1 means the port is down.
+
+**Mock-test** (never touch the live `:8787`): every target is env-overridable — point `GW_PORT`, `GW_PROC_PATTERN`, `GW_HEALTH_URL`, `GW_RELAUNCH_CMD`, `GW_FALLBACK_CMD`, `GW_WAIT_SECS` at a throwaway stub process on a scratch port.
