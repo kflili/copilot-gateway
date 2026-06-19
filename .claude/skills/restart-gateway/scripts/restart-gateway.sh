@@ -22,7 +22,24 @@
 # without ever touching the live :8787 (see SKILL.md / SPEC Validation).
 set -uo pipefail
 
+log()  { printf '%s\n' "$*" >&2; }
+
+# Validate + normalize the numeric env inputs (system boundary) BEFORE they are
+# interpolated into the pattern / URL / eval'd commands below. Order matters:
+# digit-only check first (rejects injection like GW_PORT='8787; rm -rf ~'), then
+# 10# base-10 normalize (a leading-zero override like 08787 would otherwise be
+# read as octal by the -ge/-le arithmetic, where 8/9 are invalid octal digits),
+# then range check. Fail closed.
 GW_PORT="${GW_PORT:-8787}"
+case "$GW_PORT" in ''|*[!0-9]*) log "ERROR: GW_PORT must be an integer 1..65535 (got '${GW_PORT}')"; exit 64;; esac
+GW_PORT=$((10#$GW_PORT))
+{ [ "$GW_PORT" -ge 1 ] && [ "$GW_PORT" -le 65535 ]; } || { log "ERROR: GW_PORT must be an integer 1..65535 (got '${GW_PORT}')"; exit 64; }
+
+GW_WAIT_SECS="${GW_WAIT_SECS:-30}"
+case "$GW_WAIT_SECS" in ''|*[!0-9]*) log "ERROR: GW_WAIT_SECS must be an integer >= 1 (got '${GW_WAIT_SECS}')"; exit 64;; esac
+GW_WAIT_SECS=$((10#$GW_WAIT_SECS))
+[ "$GW_WAIT_SECS" -ge 1 ] || { log "ERROR: GW_WAIT_SECS must be an integer >= 1 (got '${GW_WAIT_SECS}')"; exit 64; }
+
 # pgrep/pkill -f treat this as an extended regex matched against the full argv.
 # `gateway\.py.*--port N` tolerates intervening flags (e.g. tray_app.py spawns
 # `gateway.py --host <host> --port <port>`, while CopilotGateway.app spawns
@@ -30,7 +47,6 @@ GW_PORT="${GW_PORT:-8787}"
 # and `*` operators, never `lsof -ti:PORT | head -1` (which can hit the wrapper).
 GW_PROC_PATTERN="${GW_PROC_PATTERN:-gateway\.py.*--port ${GW_PORT}}"
 GW_HEALTH_URL="${GW_HEALTH_URL:-http://127.0.0.1:${GW_PORT}/health}"
-GW_WAIT_SECS="${GW_WAIT_SECS:-30}"
 
 # Repo root from this script's own location: the helper lives at
 # <repo>/.claude/skills/restart-gateway/scripts/restart-gateway.sh, so the repo
@@ -46,8 +62,6 @@ SAFE_REPO_ROOT="$(printf '%q' "$REPO_ROOT")"
 
 GW_RELAUNCH_CMD="${GW_RELAUNCH_CMD:-open ${SAFE_REPO_ROOT}/CopilotGateway.app}"
 GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-cd ${SAFE_REPO_ROOT} && mkdir -p logs && nohup python3 gateway.py --port ${GW_PORT} >> logs/gateway-console.log 2>&1 & disown}"
-
-log()  { printf '%s\n' "$*" >&2; }
 
 # Target pids = processes matching the pattern, EXCLUDING this script ($$) and
 # its parent shell ($PPID), so a broad GW_PROC_PATTERN override can never make the
@@ -70,16 +84,6 @@ is_fresh()    { local pid="$1" start="$2"; [ -n "$pid" ] && { [ "$pid" != "$OLD"
 # an unrelated service on the port answering a bare status:ok.
 health_ok()   { local b; b="$(curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null)" || return 1; printf '%s' "$b" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' && printf '%s' "$b" | grep -q '"version"[[:space:]]*:'; }
 health_body() { curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null || true; }
-
-# Validate the numeric env inputs (system boundary): GW_PORT and GW_WAIT_SECS are
-# interpolated into the eval'd default commands and shell arithmetic below, so a
-# non-integer override (e.g. GW_PORT='8787; rm -rf ~') would be an injection /
-# syntax vector. Fail closed before any of those are used. (After the digit-only
-# check the values are safe for the -ge/-le arithmetic comparisons.)
-case "$GW_PORT" in ''|*[!0-9]*) log "ERROR: GW_PORT must be an integer 1..65535 (got '${GW_PORT}')"; exit 64;; esac
-{ [ "$GW_PORT" -ge 1 ] && [ "$GW_PORT" -le 65535 ]; } || { log "ERROR: GW_PORT must be an integer 1..65535 (got '${GW_PORT}')"; exit 64; }
-case "$GW_WAIT_SECS" in ''|*[!0-9]*) log "ERROR: GW_WAIT_SECS must be an integer >= 1 (got '${GW_WAIT_SECS}')"; exit 64;; esac
-[ "$GW_WAIT_SECS" -ge 1 ] || { log "ERROR: GW_WAIT_SECS must be an integer >= 1 (got '${GW_WAIT_SECS}')"; exit 64; }
 
 OLD="$(proc_pid)"
 OLD_START="$(proc_start "$OLD")"
