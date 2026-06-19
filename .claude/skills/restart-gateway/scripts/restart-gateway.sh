@@ -49,9 +49,14 @@ GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-cd ${SAFE_REPO_ROOT} && mkdir -p logs && noh
 
 log()  { printf '%s\n' "$*" >&2; }
 
-# Newest matching process (pgrep -n), so a transient lingering OLD process never
-# masks the freshly-relaunched one during the health-wait.
-proc_pid()    { pgrep -n -f "$GW_PROC_PATTERN"; }
+# Target pids = processes matching the pattern, EXCLUDING this script ($$) and
+# its parent shell ($PPID), so a broad GW_PROC_PATTERN override can never make the
+# helper signal its own (or the caller's) shell. `--` stops pgrep/pkill parsing a
+# pattern that begins with `-` as an option.
+target_pids() { pgrep -f -- "$GW_PROC_PATTERN" 2>/dev/null | grep -vFx -e "$$" -e "$PPID" || true; }
+# Newest surviving match (highest pid; after the kill the old one is gone, so this
+# resolves to the freshly-relaunched process), or empty.
+proc_pid()    { target_pids | sort -n | tail -n1; }
 proc_start()  { local p="${1:-}"; [ -n "$p" ] && ps -o lstart= -p "$p" 2>/dev/null | tr -s ' ' || true; }
 
 # A real reload = a matching process whose pid OR start time differs from OLD.
@@ -69,9 +74,12 @@ health_body() { curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null || true; }
 # Validate the numeric env inputs (system boundary): GW_PORT and GW_WAIT_SECS are
 # interpolated into the eval'd default commands and shell arithmetic below, so a
 # non-integer override (e.g. GW_PORT='8787; rm -rf ~') would be an injection /
-# syntax vector. Fail closed before any of those are used.
-case "$GW_PORT" in ''|*[!0-9]*) log "ERROR: GW_PORT must be a positive integer (got '${GW_PORT}')"; exit 64;; esac
-case "$GW_WAIT_SECS" in ''|*[!0-9]*) log "ERROR: GW_WAIT_SECS must be a positive integer (got '${GW_WAIT_SECS}')"; exit 64;; esac
+# syntax vector. Fail closed before any of those are used. (After the digit-only
+# check the values are safe for the -ge/-le arithmetic comparisons.)
+case "$GW_PORT" in ''|*[!0-9]*) log "ERROR: GW_PORT must be an integer 1..65535 (got '${GW_PORT}')"; exit 64;; esac
+{ [ "$GW_PORT" -ge 1 ] && [ "$GW_PORT" -le 65535 ]; } || { log "ERROR: GW_PORT must be an integer 1..65535 (got '${GW_PORT}')"; exit 64; }
+case "$GW_WAIT_SECS" in ''|*[!0-9]*) log "ERROR: GW_WAIT_SECS must be an integer >= 1 (got '${GW_WAIT_SECS}')"; exit 64;; esac
+[ "$GW_WAIT_SECS" -ge 1 ] || { log "ERROR: GW_WAIT_SECS must be an integer >= 1 (got '${GW_WAIT_SECS}')"; exit 64; }
 
 OLD="$(proc_pid)"
 OLD_START="$(proc_start "$OLD")"
@@ -80,15 +88,18 @@ log "port=${GW_PORT} pattern='${GW_PROC_PATTERN}'"
 log "old pid=${OLD:-<none>} start='${OLD_START:-<none>}'"
 
 # 1. Graceful kill by pattern (TERM); escalate to KILL if still alive after ~5s.
+#    Signal only target_pids (self/parent excluded), never a blind `pkill -f`.
 if [ -n "$OLD" ]; then
-  pkill -f "$GW_PROC_PATTERN" || true
+  pids="$(target_pids)"
+  [ -n "$pids" ] && kill $pids 2>/dev/null || true
   for _ in {1..10}; do
-    pgrep -f "$GW_PROC_PATTERN" >/dev/null || break
+    [ -z "$(target_pids)" ] && break
     sleep 0.5
   done
-  if pgrep -f "$GW_PROC_PATTERN" >/dev/null; then
+  pids="$(target_pids)"
+  if [ -n "$pids" ]; then
     log "TERM did not clear it; escalating to KILL"
-    pkill -9 -f "$GW_PROC_PATTERN" || true
+    kill -9 $pids 2>/dev/null || true
     sleep 1
   fi
 else
@@ -119,10 +130,13 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   sleep 1
 done
 
-# 4. Report + exit status. A NEW pid or start time is the proof it reloaded
-#    (a genuine restart also zeroes /health requests/tokens, but the helper does
-#    not gate on that); /health ok with an UNCHANGED pid AND start time means the
-#    old process is likely orphaned and still serving stale code.
+# 4. Report + exit status. Order: health is the gate — if /health isn't a healthy
+#    gateway, that's the hard failure (exit 1). Given health is ok, a NEW pid or
+#    start time proves a real reload (exit 0); an UNCHANGED pid AND start time is a
+#    suspected orphan still serving stale code (exit 2); health ok but no fresh
+#    match confirmable (e.g. an external supervisor) is not a hard down (exit 0,
+#    warn). (A genuine restart also zeroes /health requests/tokens, but the helper
+#    gates on pid/start time + health, not the counters.)
 NEW="$(proc_pid)"
 NEW_START="$(proc_start "$NEW")"
 BODY="$(health_body)"
@@ -130,17 +144,25 @@ log "── result ──"
 log "new pid=${NEW:-<none>} start='${NEW_START:-<none>}'"
 log "/health: ${BODY:-<no response>}"
 
-if is_fresh "$NEW" "$NEW_START" && health_ok; then
+if ! health_ok; then
+  log "FAILED: :${GW_PORT} did not return a healthy gateway /health (status+version) after ${GW_WAIT_SECS}s — the port may be down, or another service may be answering on it. Recover manually:"
+  log "  ${GW_FALLBACK_CMD}"
+  exit 1
+fi
+
+if is_fresh "$NEW" "$NEW_START"; then
   log "OK: :${GW_PORT} healthy with a FRESH process (pid ${OLD:-<none>}/start '${OLD_START:-<none>}' → ${NEW}/start '${NEW_START:-<none>}'). Reloaded from disk."
   exit 0
 fi
 
-if health_ok && [ -n "$NEW" ] && [ "$NEW" = "$OLD" ] && [ "$NEW_START" = "$OLD_START" ]; then
+if [ -n "$NEW" ] && [ "$NEW" = "$OLD" ] && [ "$NEW_START" = "$OLD_START" ]; then
   log "WARNING: :${GW_PORT} answers ok but the process is UNCHANGED (pid ${NEW}, same start time) — the OLD process is likely orphaned and still serving STALE code (did the kill hit the app wrapper instead of the python child?). Recover manually:"
-  log "  pkill -9 -f '${GW_PROC_PATTERN}' ; ${GW_RELAUNCH_CMD}"
+  log "  pkill -9 -f -- '${GW_PROC_PATTERN}' ; ${GW_RELAUNCH_CMD}"
   exit 2
 fi
 
-log "FAILED: :${GW_PORT} did not return a healthy gateway /health (status+version) after ${GW_WAIT_SECS}s — the port may be down, or another service may be answering on it. Recover manually:"
-log "  ${GW_FALLBACK_CMD}"
-exit 1
+# Healthy, but no fresh matching process could be confirmed (e.g. an external
+# supervisor relaunched it under a command line the pattern doesn't match, or the
+# process query came up empty). The port is serving, so this is not a hard down.
+log "WARNING: :${GW_PORT} is healthy but a fresh matching process could not be confirmed (pid=${NEW:-<none>}, pattern='${GW_PROC_PATTERN}') — it may be supervised externally. Verify the start time manually if you need reload proof."
+exit 0
