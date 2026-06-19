@@ -36,9 +36,20 @@ GW_FALLBACK_CMD="${GW_FALLBACK_CMD:-cd \"${REPO_ROOT}\" && mkdir -p logs && nohu
 
 log()  { printf '%s\n' "$*" >&2; }
 
-proc_pid()    { pgrep -f "$GW_PROC_PATTERN" | head -1; }
+# Newest matching process (pgrep -n), so a transient lingering OLD process never
+# masks the freshly-relaunched one during the health-wait.
+proc_pid()    { pgrep -n -f "$GW_PROC_PATTERN"; }
 proc_start()  { local p="${1:-}"; [ -n "$p" ] && ps -o lstart= -p "$p" 2>/dev/null | tr -s ' ' || true; }
-health_ok()   { curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; }
+
+# A real reload = a matching process whose pid OR start time differs from OLD.
+# The start-time arm covers the rare pid-reuse case (same pid, genuinely newer
+# process) — pid change alone is not the whole proof, per the script's contract.
+is_fresh()    { local pid="$1" start="$2"; [ -n "$pid" ] && { [ "$pid" != "$OLD" ] || [ "$start" != "$OLD_START" ]; }; }
+
+# Healthy = /health reports status:ok AND carries the gateway's version field
+# (the repo health contract is status+version, per tray_app.py) — guards against
+# an unrelated service on the port answering a bare status:ok.
+health_ok()   { local b; b="$(curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null)" || return 1; printf '%s' "$b" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' && printf '%s' "$b" | grep -q '"version"[[:space:]]*:'; }
 health_body() { curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null || true; }
 
 OLD="$(proc_pid)"
@@ -67,15 +78,16 @@ fi
 log "relaunch: ${GW_RELAUNCH_CMD}"
 eval "${GW_RELAUNCH_CMD}" || log "relaunch command returned non-zero (continuing to health-wait)"
 
-# 3. Health-wait up to GW_WAIT_SECS. Success = /health status:ok AND a fresh pid
-#    (non-empty, != OLD). At ~half the budget, if still fully down, run the
-#    one-shot fallback relaunch.
+# 3. Health-wait up to GW_WAIT_SECS. Success = /health status:ok AND a fresh
+#    process (pid or start time changed vs OLD). At ~half the budget, if still
+#    fully down, run the one-shot fallback relaunch.
 deadline=$((SECONDS + GW_WAIT_SECS))
 halfway=$((SECONDS + GW_WAIT_SECS / 2))
 fallback_done=0
 while [ "$SECONDS" -lt "$deadline" ]; do
   NEW="$(proc_pid)"
-  if [ -n "$NEW" ] && [ "$NEW" != "$OLD" ] && health_ok; then
+  NEW_START="$(proc_start "$NEW")"
+  if is_fresh "$NEW" "$NEW_START" && health_ok; then
     break
   fi
   if [ "$fallback_done" -eq 0 ] && [ "$SECONDS" -ge "$halfway" ] && [ -z "$NEW" ] && ! health_ok; then
@@ -96,13 +108,13 @@ log "── result ──"
 log "new pid=${NEW:-<none>} start='${NEW_START:-<none>}'"
 log "/health: ${BODY:-<no response>}"
 
-if [ -n "$NEW" ] && [ "$NEW" != "$OLD" ] && health_ok; then
-  log "OK: :${GW_PORT} healthy with a FRESH process (pid ${OLD:-<none>} → ${NEW}). Reloaded from disk."
+if is_fresh "$NEW" "$NEW_START" && health_ok; then
+  log "OK: :${GW_PORT} healthy with a FRESH process (pid ${OLD:-<none>}/start '${OLD_START:-<none>}' → ${NEW}/start '${NEW_START:-<none>}'). Reloaded from disk."
   exit 0
 fi
 
-if health_ok && [ -n "$NEW" ] && [ "$NEW" = "$OLD" ]; then
-  log "WARNING: :${GW_PORT} answers ok but the pid is UNCHANGED (${NEW}) — the OLD process is likely orphaned and still serving STALE code (did the kill hit the app wrapper instead of the python child?). Recover manually:"
+if health_ok && [ -n "$NEW" ] && [ "$NEW" = "$OLD" ] && [ "$NEW_START" = "$OLD_START" ]; then
+  log "WARNING: :${GW_PORT} answers ok but the process is UNCHANGED (pid ${NEW}, same start time) — the OLD process is likely orphaned and still serving STALE code (did the kill hit the app wrapper instead of the python child?). Recover manually:"
   log "  pkill -9 -f '${GW_PROC_PATTERN}' ; ${GW_RELAUNCH_CMD}"
   exit 2
 fi
