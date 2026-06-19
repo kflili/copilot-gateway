@@ -9,8 +9,10 @@
 #     supervisor while orphaning the old python that keeps serving STALE code
 #     (and /health still answers ok, so it looks like a clean restart when
 #     nothing actually reloaded).
-#   * Proof of a real reload is a FRESH pid / start time (reset request counter),
-#     NOT `/health` ok alone — an orphaned old process answers ok too.
+#   * Proof of a real reload is a FRESH pid / start time, NOT `/health` ok alone
+#     — an orphaned old process answers ok too. (A genuine restart also zeroes
+#     the /health requests/tokens counters, but the helper gates on pid/start
+#     time + health, not the counters.)
 #   * Self-restart paradox: when run from a session that itself routes through
 #     :8787, the kill drops the caller's own connection mid-flight; doing
 #     kill+relaunch+health-wait as ONE blocking step means the caller's next
@@ -54,14 +56,22 @@ proc_start()  { local p="${1:-}"; [ -n "$p" ] && ps -o lstart= -p "$p" 2>/dev/nu
 
 # A real reload = a matching process whose pid OR start time differs from OLD.
 # The start-time arm covers the rare pid-reuse case (same pid, genuinely newer
-# process) — pid change alone is not the whole proof, per the script's contract.
-is_fresh()    { local pid="$1" start="$2"; [ -n "$pid" ] && { [ "$pid" != "$OLD" ] || [ "$start" != "$OLD_START" ]; }; }
+# process) — but only when both start times are readable, so a failed `ps` read
+# (empty start) can't masquerade as a fresh process.
+is_fresh()    { local pid="$1" start="$2"; [ -n "$pid" ] && { [ "$pid" != "$OLD" ] || { [ -n "$start" ] && [ -n "$OLD_START" ] && [ "$start" != "$OLD_START" ]; }; }; }
 
 # Healthy = /health reports status:ok AND carries the gateway's version field
 # (the repo health contract is status+version, per tray_app.py) — guards against
 # an unrelated service on the port answering a bare status:ok.
 health_ok()   { local b; b="$(curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null)" || return 1; printf '%s' "$b" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' && printf '%s' "$b" | grep -q '"version"[[:space:]]*:'; }
 health_body() { curl -fsS --max-time 3 "$GW_HEALTH_URL" 2>/dev/null || true; }
+
+# Validate the numeric env inputs (system boundary): GW_PORT and GW_WAIT_SECS are
+# interpolated into the eval'd default commands and shell arithmetic below, so a
+# non-integer override (e.g. GW_PORT='8787; rm -rf ~') would be an injection /
+# syntax vector. Fail closed before any of those are used.
+case "$GW_PORT" in ''|*[!0-9]*) log "ERROR: GW_PORT must be a positive integer (got '${GW_PORT}')"; exit 64;; esac
+case "$GW_WAIT_SECS" in ''|*[!0-9]*) log "ERROR: GW_WAIT_SECS must be a positive integer (got '${GW_WAIT_SECS}')"; exit 64;; esac
 
 OLD="$(proc_pid)"
 OLD_START="$(proc_start "$OLD")"
@@ -109,9 +119,10 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   sleep 1
 done
 
-# 4. Report + exit status. A NEW pid/start time (and reset requests/tokens) is
-#    the proof it reloaded; /health ok with an UNCHANGED pid means the old
-#    process is likely orphaned and still serving stale code.
+# 4. Report + exit status. A NEW pid or start time is the proof it reloaded
+#    (a genuine restart also zeroes /health requests/tokens, but the helper does
+#    not gate on that); /health ok with an UNCHANGED pid AND start time means the
+#    old process is likely orphaned and still serving stale code.
 NEW="$(proc_pid)"
 NEW_START="$(proc_start "$NEW")"
 BODY="$(health_body)"
@@ -130,6 +141,6 @@ if health_ok && [ -n "$NEW" ] && [ "$NEW" = "$OLD" ] && [ "$NEW_START" = "$OLD_S
   exit 2
 fi
 
-log "FAILED: :${GW_PORT} is NOT healthy after ${GW_WAIT_SECS}s — the gateway is DOWN. Recover manually:"
+log "FAILED: :${GW_PORT} did not return a healthy gateway /health (status+version) after ${GW_WAIT_SECS}s — the port may be down, or another service may be answering on it. Recover manually:"
 log "  ${GW_FALLBACK_CMD}"
 exit 1
