@@ -104,6 +104,31 @@ Then in `~/.claude/settings.json`:
 
 **Caveat**: This doesn't send the `Copilot-Integration-Id` header, so some models may not work. The gateway adds this header automatically. Also, if your `gh auth token` expires, you need to update it manually. The gateway handles refresh automatically.
 
+### Option D: Per-model/provider profile files (plain terminal use only)
+
+If you switch between several models or providers often, create one self-contained settings file per profile instead of retyping env vars:
+
+```bash
+mkdir -p ~/.claude/profiles
+cat > ~/.claude/profiles/copilot-gateway-opus48.json <<'JSON'
+{
+  "model": "claude-opus-4-8",
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "dummy",
+    "ANTHROPIC_BASE_URL": "http://localhost:8787",
+    "ANTHROPIC_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8"
+  }
+}
+JSON
+
+claude --settings ~/.claude/profiles/copilot-gateway-opus48.json --permission-mode bypassPermissions
+```
+
+Each profile must be **fully self-contained** — repeat every key it needs (auth token, base URL, model) rather than splitting "base env" and "model override" into separate files. Claude Code does not deep-merge multiple `--settings` sources with each other: passing two `--settings` flags means the **last one wins entirely**, discarding keys from the earlier one even if the later file doesn't mention them (confirmed empirically 2026-07-07). A partial profile only works if it's the sole `--settings` flag on the command line.
+
+**Do not use this pattern from cmux, or anywhere else that already passes its own `--settings`.** cmux's own launcher injects `--settings {hooks...}` for every Claude Code session it starts; a second `--settings <profile>` from an alias or wrapper would silently discard cmux's hooks (or vice versa, depending on flag order) instead of combining with them. `claude-via-gateway` (the wrapper cmux uses — see `agent-toolkit`'s `cmux-claude-gateway` skill) intentionally avoids `--settings` for this reason and routes the gateway via shell-exported env instead, which layers safely underneath cmux's `--settings` since there's no overlapping key.
+
 ## Step 4: Verify It Works
 
 ```bash
@@ -241,6 +266,12 @@ claude  # Claude Code direct, default permissions
 curl http://localhost:8787/health        # is gateway alive?
 tail -f logs/latest/gateway.log          # what's happening?
 ```
+
+**If the gateway looks healthy but `cgcc` still fails with `401` / `"Please run /login"`**, check `~/.claude/settings.json`'s `env` block for a stray or blank `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` key:
+```bash
+grep -A2 '"ANTHROPIC_' ~/.claude/settings.json
+```
+Claude Code's settings-file `env` **always overrides shell-exported env** (documented Anthropic precedence) — so if anything else has written those keys into `settings.json`, it silently defeats `cgcc`'s exports with no error mentioning the gateway at all. The most common cause is a third-party Claude account/profile switcher GUI (e.g. **WeSight**, **CC Switch**, or similar tools that manage `~/.claude/settings.json`) — using one of those tools can rewrite this block at any time. Fix: remove the conflicting keys from `settings.json`'s `env` block, or reconcile them with that tool's own settings if you rely on it. `claude-via-gateway` (the wrapper cmux uses) detects this automatically and prints a diagnostic before failing; a plain `cgcc` invocation does not, so this manual check is the fastest way to confirm it.
 
 The ⚡️CG menu bar shows live stats (e.g., `⚡️CG 42↗ 170K`). Click it for:
 - **📊 Stats** — requests, premium requests, token breakdown, uptime
