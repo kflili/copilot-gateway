@@ -912,25 +912,28 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                             _strip_cc_scope(item)
                     elif isinstance(msg_list, dict):
                         _strip_cc_scope(msg_list)
-                # Pass output_config.effort through unchanged.  Copilot models
+                # Forward output_config.effort largely as-is: Copilot models
                 # accept different effort levels and the supported set expands
                 # over time, so rather than maintain a hardcoded allowlist we
-                # forward whatever the client sent and surface upstream's 400
-                # to the user with an actionable hint (see error handling
-                # below).  The per-model effort arrays are also exposed on
-                # /v1/models (reasoning_efforts) so clients can pre-validate.
+                # forward what the client sent and surface upstream's 400 with
+                # an actionable hint (see error handling below).  The per-model
+                # effort arrays are exposed on /v1/models (reasoning_efforts) so
+                # clients can pre-validate.  The only adjustments are the two
+                # narrow, per-model cases below: the 4.6 xhigh clamp here and
+                # the 4.8 absent-effort injection further down.
                 #
                 # Base claude-opus-4.6 / 4.7 forward as-is: both ship with 1M
-                # context and accept the full effort set upstream, so the old
-                # rewrite to "-1m" / "-1m-internal" variants (a stale workaround
-                # from when base 4.7 only accepted "medium") was removed — the
-                # rewritten ids are not in GitHub's available list and 400 with
-                # model_not_available_for_integrator.
+                # context and accept their native effort sets upstream (4.7:
+                # low/medium/high/xhigh/max; 4.6: low/medium/high/max), so the
+                # old rewrite to "-1m" / "-1m-internal" variants (a stale
+                # workaround from when base 4.7 only accepted "medium") was
+                # removed — the rewritten ids are not in GitHub's available list
+                # and 400 with model_not_available_for_integrator.
                 #
-                # Defensive clamp: 4.6 does not accept "xhigh" (its efforts are
-                # low/medium/high/max — no xhigh).  A hand-crafted request that
-                # sends xhigh would 400, so clamp it down to "high" (a supported
-                # level) rather than reject.
+                # Defensive clamp: 4.6 does not accept "xhigh" (its native set
+                # is low/medium/high/max — no xhigh).  A hand-crafted request
+                # that sends xhigh would 400, so clamp it down to "high" (a
+                # supported level) rather than reject.
                 if model in ("claude-opus-4.6", "claude-opus-4-6"):
                     oc = req_json.get("output_config")
                     if isinstance(oc, dict) and oc.get("effort") == "xhigh":
