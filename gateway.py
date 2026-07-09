@@ -742,6 +742,19 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             "supports_streaming": supports.get("streaming", False),
             "supports_tools": supports.get("tool_calls", False),
             "supports_vision": supports.get("vision", False),
+            # Per-model picker/effort metadata passed through from upstream so
+            # downstream clients (e.g. superX) can build a per-model reasoning
+            # effort selector like VS Code / the Copilot CLI does.  These are
+            # ADDITIVE — the flat fields above stay for back-compat.
+            #   reasoning_efforts: capabilities.supports.reasoning_effort array
+            #     (e.g. opus-4.8 → ["low","medium","high","xhigh","max"]).
+            #     Emitted as [] when the model has no effort control (e.g.
+            #     haiku is non-thinking) so the shape is uniform and clients
+            #     read "empty ⇒ hide the effort control".
+            "reasoning_efforts": supports.get("reasoning_effort", []),
+            "model_picker_enabled": m.get("model_picker_enabled", False),
+            "model_picker_category": m.get("model_picker_category"),
+            "preview": m.get("preview", False),
         }
 
     # ── /health ──
@@ -899,30 +912,33 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                             _strip_cc_scope(item)
                     elif isinstance(msg_list, dict):
                         _strip_cc_scope(msg_list)
-                # Pass output_config.effort through unchanged.  Different
-                # Copilot models accept different effort levels (e.g. 4.7
-                # accepts only "medium", 4.6 accepts low/medium/high) and
-                # the supported set may expand over time.  Rather than
-                # maintain a hardcoded allowlist, we forward whatever the
-                # client sent and surface upstream's 400 to the user with
-                # an actionable hint (see error response handling).
+                # Forward output_config.effort largely as-is: Copilot models
+                # accept different effort levels and the supported set expands
+                # over time, so rather than maintain a hardcoded allowlist we
+                # forward what the client sent and surface upstream's 400 with
+                # an actionable hint (see error handling below).  The per-model
+                # effort arrays are exposed on /v1/models (reasoning_efforts) so
+                # clients can pre-validate.  The only adjustments are the two
+                # narrow, per-model cases below: the 4.6 xhigh clamp here and
+                # the 4.8 absent-effort injection further down.
                 #
-                # Model rewrite: the base "claude-opus-4.7" model ID has
-                # supportedReasoningEfforts=["medium"] upstream (verified
-                # in Copilot CLI app.js).  Clients like Claude Code that
-                # send /effort high|xhigh on the base ID get rejected.
-                # The 1M-internal variant accepts low/medium/high/xhigh
-                # under a single ID and gives 1M context, so route bare
-                # "claude-opus-4.7" requests there.  Leave explicit
-                # -high / -xhigh / -1m-internal selections alone.
-                if model in ("claude-opus-4.7", "claude-opus-4-7"):
-                    req_json["model"] = "claude-opus-4.7-1m-internal"
-                    model = req_json["model"]
-                    stripped.append("model→4.7-1m-internal")
-                elif model in ("claude-opus-4.6", "claude-opus-4-6"):
-                    req_json["model"] = "claude-opus-4.6-1m"
-                    model = req_json["model"]
-                    stripped.append("model→4.6-1m")
+                # Base claude-opus-4.6 / 4.7 forward as-is: both ship with 1M
+                # context and accept their native effort sets upstream (4.7:
+                # low/medium/high/xhigh/max; 4.6: low/medium/high/max), so the
+                # old rewrite to "-1m" / "-1m-internal" variants (a stale
+                # workaround from when base 4.7 only accepted "medium") was
+                # removed — the rewritten ids are not in GitHub's available list
+                # and 400 with model_not_available_for_integrator.
+                #
+                # Defensive clamp: 4.6 does not accept "xhigh" (its native set
+                # is low/medium/high/max — no xhigh).  A hand-crafted request
+                # that sends xhigh would 400, so clamp it down to "high" (a
+                # supported level) rather than reject.
+                if model in ("claude-opus-4.6", "claude-opus-4-6"):
+                    oc = req_json.get("output_config")
+                    if isinstance(oc, dict) and oc.get("effort") == "xhigh":
+                        oc["effort"] = "high"
+                        stripped.append("effort:xhigh→high(4.6)")
                 # Rewrite Anthropic-style `thinking.type=enabled` → `adaptive`
                 # for Claude Opus 4.7 and 4.8.  Copilot's upstream rejects
                 # "enabled" on these models with:
