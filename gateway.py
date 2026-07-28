@@ -940,41 +940,52 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                         oc["effort"] = "high"
                         stripped.append("effort:xhigh→high(4.6)")
                 # Rewrite Anthropic-style `thinking.type=enabled` → `adaptive`
-                # for Claude Opus 4.7 and 4.8.  Copilot's upstream rejects
-                # "enabled" on these models with:
+                # for Claude Opus 4.7/4.8 and the Claude 5 generation (opus-5,
+                # sonnet-5).  Copilot's upstream rejects "enabled" on these
+                # models with:
                 #   "thinking.type.enabled" is not supported for this model.
                 #   Use "thinking.type.adaptive" and "output_config.effort"
                 # `adaptive` lets the model decide when to think and uses
                 # `output_config.effort` (forwarded / injected below) as the
                 # control.  `budget_tokens` is irrelevant in adaptive mode, so
                 # drop it.  4.6 family still accepts `enabled`, so leave it
-                # alone.  Narrow by design — only broaden after empirically
-                # confirming another model in the family hits the same
-                # rejection (4.8 verified 2026-06).
+                # alone.  Claude Code ALWAYS sends `thinking.type=enabled`, so
+                # without this entry a model 400s on every single request —
+                # this rewrite is what makes a model usable from Claude Code at
+                # all.  Narrow by design — only broaden after empirically
+                # confirming another model hits the same rejection (4.8
+                # verified 2026-06; opus-5 + sonnet-5 verified 2026-07).
                 if model.startswith(("claude-opus-4.7", "claude-opus-4-7",
-                                     "claude-opus-4.8", "claude-opus-4-8")):
+                                     "claude-opus-4.8", "claude-opus-4-8",
+                                     "claude-opus-5", "claude-sonnet-5")):
                     thinking = req_json.get("thinking")
                     if isinstance(thinking, dict) and thinking.get("type") == "enabled":
                         thinking["type"] = "adaptive"
                         thinking.pop("budget_tokens", None)
                         stripped.append("thinking.type:enabled→adaptive")
-                # Pin "xhigh" reasoning effort for bare Claude Opus 4.8.
+                # Pin "xhigh" reasoning effort for bare Claude Opus 4.8 / 5.
                 # Claude Code never sends `output_config.effort`, so without
                 # this the model falls back to its adaptive default rather
-                # than the "Claude Opus 4.8 (xhigh)" tier the Copilot CLI
-                # exposes.  4.8 ships as a single model id (no -xhigh/-1m
-                # variants) with native 1M context and accepts
-                # low/medium/high/xhigh/max — verified 2026-06.  Only inject
-                # when the client did not specify an effort, so explicit
-                # selections still win.
-                if model in ("claude-opus-4.8", "claude-opus-4-8"):
+                # than the "(xhigh)" tier the Copilot CLI exposes.  Both ship
+                # as a single model id (no -xhigh/-1m variants) with native 1M
+                # context and accept low/medium/high/xhigh/max — 4.8 verified
+                # 2026-06, opus-5 verified 2026-07.  Only inject when the
+                # client did not specify an effort, so explicit selections
+                # still win.
+                #
+                # Opus only, deliberately: sonnet-5 also accepts xhigh but is
+                # the cheap/fast tier (Claude Code drives it for sub-agents),
+                # so silently pinning max-cost effort there would be a
+                # surprising cost regression.  It keeps upstream's default.
+                if model in ("claude-opus-4.8", "claude-opus-4-8",
+                             "claude-opus-5"):
                     oc = req_json.get("output_config")
                     if not isinstance(oc, dict):
                         oc = {}
                         req_json["output_config"] = oc
                     if "effort" not in oc:
                         oc["effort"] = "xhigh"
-                        stripped.append("effort→xhigh(4.8)")
+                        stripped.append(f"effort→xhigh({model})")
                 # Strip tools not supported by the Copilot API
                 tools = req_json.get("tools")
                 if isinstance(tools, list):
