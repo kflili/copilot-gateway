@@ -4,7 +4,7 @@ A local LLM API gateway that lets **any product** access GitHub Copilot's models
 
 ## Why
 
-GitHub Copilot subscription (via employee/enterprise plan) includes access to all major models — Claude Opus 4.8 (1M context), GPT-5.5, Gemini 3.1 Pro, etc. But the official Copilot CLI wraps these behind its own prompt system, agent framework, and tool layer. This gateway **bypasses the CLI** and gives direct model access, so any product can send prompts and get responses — like a self-hosted LLM provider backed by your Copilot subscription.
+GitHub Copilot subscription (via employee/enterprise plan) includes access to all major models — Claude Opus 5 (1M context), GPT-5.5, Gemini 3.1 Pro, etc. But the official Copilot CLI wraps these behind its own prompt system, agent framework, and tool layer. This gateway **bypasses the CLI** and gives direct model access, so any product can send prompts and get responses — like a self-hosted LLM provider backed by your Copilot subscription.
 
 ## Architecture
 
@@ -119,7 +119,8 @@ alias ca="claude --enable-auto-mode"
 | Command | What it does |
 |---------|-------------|
 | `cg` | Start gateway in background (+ demo UI on :8788, + ⚡️CG menu bar) with per-session logs |
-| `cgcc` | Claude Code through gateway on Claude Opus 4.8 (xhigh effort, native 1M context), skip all permissions |
+| `cgcc` | Claude Code through gateway on Claude Opus 5 (xhigh effort, native 1M context), skip all permissions |
+| `cgcc48` | Claude Code through gateway on Claude Opus 4.8 (xhigh effort, 1M context), skip all permissions |
 | `cgcc47` | Claude Code through gateway on Claude Opus 4.7 (1M context), skip all permissions |
 | `cgca` | Claude Code through gateway, auto mode (safer, when available) |
 | `cgcx` | Codex CLI through gateway (gpt-5.5/5.4 etc., workspace-write sandbox) |
@@ -160,7 +161,9 @@ always-authoritative live list with capabilities.
 
 | Model | Endpoint | Format | Mode | Context |
 |-------|----------|--------|------|---------|
-| `claude-opus-4.8` | `/v1/messages` | Anthropic Messages API | Both | 1M (current default) |
+| `claude-opus-5` | `/v1/messages` | Anthropic Messages API | Both | 1M (current default) |
+| `claude-sonnet-5` | `/v1/messages` | Anthropic Messages API | Both | 1M |
+| `claude-opus-4.8` | `/v1/messages` | Anthropic Messages API | Both | 1M |
 | `claude-opus-4.7` | `/v1/messages` | Anthropic Messages API | Both | 1M |
 | `claude-opus-4.6` | `/v1/messages` | Anthropic Messages API | Both | 1M |
 | `claude-sonnet-4.6` | `/v1/messages` | Anthropic Messages API | Both | 1M |
@@ -189,7 +192,7 @@ model through the OpenAI-format paths.
 from anthropic import Anthropic
 client = Anthropic(auth_token="dummy", base_url="http://localhost:8787")
 msg = client.messages.create(
-    model="claude-opus-4.8",  # native 1M context
+    model="claude-opus-5",  # native 1M context
     max_tokens=4096,
     messages=[{"role": "user", "content": "Hello!"}],
 )
@@ -245,7 +248,7 @@ The 405 response itself completes in <1 s. The user-observable delay on the firs
 # Anthropic format
 curl http://localhost:8787/v1/messages \
   -H "Content-Type: application/json" \
-  -d '{"model":"claude-opus-4.8","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"model":"claude-opus-5","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}'
 
 # OpenAI format
 curl http://localhost:8787/v1/chat/completions \
@@ -395,13 +398,13 @@ user scope via `setx` and merges the same values into
 Current Claude default written by the tray:
 
 ```text
-ANTHROPIC_MODEL=claude-opus-4-8[1m]
-ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-8[1m]
-ANTHROPIC_DEFAULT_OPUS_MODEL_NAME=Opus 4.8 via Gateway
+ANTHROPIC_MODEL=claude-opus-5[1m]
+ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-5[1m]
+ANTHROPIC_DEFAULT_OPUS_MODEL_NAME=Opus 5 via Gateway
 ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES=effort,xhigh_effort,thinking,adaptive_thinking,interleaved_thinking
 ```
 
-The tray also sets `"model": "claude-opus-4-8[1m]"` and
+The tray also sets `"model": "claude-opus-5[1m]"` and
 `"effortLevel": "xhigh"` in Claude Code settings. Restart open terminals,
 IDE windows, and Claude Code sessions after enabling because `setx` does not
 change already-running processes.
@@ -413,7 +416,7 @@ auto-compaction.
 
 For WSL, run **Enable for WSL** for each distro you use. It rewrites the
 distro rc-file block and, when a stable Windows-host URL is available, merges
-the same 4.8/xhigh defaults into that distro's `~/.claude/settings.json`.
+the same Opus 5/xhigh defaults into that distro's `~/.claude/settings.json`.
 
 Bind safety: by default the spawned gateway listens on `127.0.0.1` (loopback —
 not reachable from WSL or LAN). To make it reachable from WSL distros,
@@ -497,5 +500,6 @@ directories (`.venv\`, `build\`, `dist\`) are gitignored.
 - Rate limits are per your Copilot plan (enterprise = unlimited for this user)
 - Gemini 3 Pro was deprecated March 26, 2026; replaced by Gemini 3.1 Pro (VS Code mode only)
 - The Copilot API does not support Anthropic's `context_management` (server-side compaction); the gateway strips this field from requests. Claude Code handles context management client-side, so there's no practical impact.
+- **New Claude models need a gateway allowlist entry.** Claude Opus 4.7/4.8 and the Claude 5 generation reject Anthropic's `thinking.type: "enabled"` upstream (`Use "thinking.type.adaptive" and "output_config.effort"`). Claude Code sends `enabled` on *every* request, so the gateway rewrites it to `adaptive` for a hardcoded model list in `gateway.py`. A newly released Claude model is **not** usable from Claude Code until it is added to that list — it 400s on the first request. The gateway also injects `output_config.effort: "xhigh"` for bare Opus 4.8 / Opus 5 (Claude Code never sends an effort, so without this they fall back to upstream's adaptive default instead of the xhigh tier). Explicit client-sent efforts always win. Sonnet is deliberately left at upstream's default to avoid a silent cost regression on the cheap tier.
 - **Server-side tool asymmetry**: Copilot honors OpenAI's `web_search` server tool on `/v1/responses` for GPT-5.x but rejects Anthropic's `web_search_20250305` on `/v1/messages` for Claude. See `docs/api-shapes-reference.md` § *Built-in server tools*. Workaround for Claude Code: invoke the `gpt` skill (copilot CLI) for ad-hoc web research instead of relying on Anthropic's `WebSearch`.
 - **Codex CLI WebSocket fallback**: First prompt of each `cgcx` session shows a one-time `Falling back from WebSockets to HTTPS transport` message and ~5s delay. The Codex CLI tries WebSocket transport at `/v1/responses` first; the gateway returns `405 Method Not Allowed` to force immediate fallback. Subsequent prompts in the same session are direct HTTPS POST with no overhead.

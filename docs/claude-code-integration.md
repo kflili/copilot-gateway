@@ -110,19 +110,19 @@ If you switch between several models or providers often, create one self-contain
 
 ```bash
 mkdir -p ~/.claude/profiles
-cat > ~/.claude/profiles/copilot-gateway-opus48.json <<'JSON'
+cat > ~/.claude/profiles/copilot-gateway-opus5.json <<'JSON'
 {
-  "model": "claude-opus-4-8",
+  "model": "claude-opus-5[1m]",
   "env": {
     "ANTHROPIC_AUTH_TOKEN": "dummy",
     "ANTHROPIC_BASE_URL": "http://localhost:8787",
-    "ANTHROPIC_MODEL": "claude-opus-4-8",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8"
+    "ANTHROPIC_MODEL": "claude-opus-5[1m]",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5[1m]"
   }
 }
 JSON
 
-claude --settings ~/.claude/profiles/copilot-gateway-opus48.json --permission-mode bypassPermissions
+claude --settings ~/.claude/profiles/copilot-gateway-opus5.json --permission-mode bypassPermissions
 ```
 
 Each profile must be **fully self-contained** — repeat every key it needs (auth token, base URL, model) rather than splitting "base env" and "model override" into separate files. Claude Code does not deep-merge multiple `--settings` sources with each other: passing two `--settings` flags means the **last one wins entirely**, discarding keys from the earlier one even if the later file doesn't mention them (confirmed empirically 2026-07-07). A partial profile only works if it's the sole `--settings` flag on the command line.
@@ -195,19 +195,19 @@ All model name formats are accepted by the Copilot API (tested):
 | `claude-sonnet-4-6-20250514` | Yes | `claude-sonnet-4-6` |
 | `claude-haiku-4-5-20251001` | Yes | `claude-haiku-4-5-20251001` |
 | `claude-opus-4-6-20250514` | Yes | `claude-opus-4-6` |
-| `claude-opus-4.6-1m` | Yes | `claude-opus-4-6` |
+| `claude-opus-5[1m]` | Yes | `claude-opus-5` (Claude Code strips `[1m]` before sending) |
 
 ### Can I override which model Claude Code uses?
 
 Yes, via env vars (no settings file changes needed):
 ```bash
-# Use Opus 4.6 as primary, haiku for summaries (default)
+# Use Opus 5 as primary, haiku for summaries (default)
 ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 \
-  ANTHROPIC_MODEL=claude-opus-4.6 claude
+  ANTHROPIC_MODEL=claude-opus-5 claude
 
-# Use Opus 4.6 1M context as primary
+# Use Opus 5 with Claude Code's 1M context budget
 ANTHROPIC_AUTH_TOKEN=dummy ANTHROPIC_BASE_URL=http://localhost:8787 \
-  ANTHROPIC_MODEL=claude-opus-4.6-1m claude
+  ANTHROPIC_MODEL='claude-opus-5[1m]' claude
 ```
 
 ## Limitations
