@@ -64,7 +64,22 @@ SAFE_REPO_ROOT="$(printf '%q' "$REPO_ROOT")"
 # otherwise launch the python directly, so a fresh clone / non-mac setup (no .app)
 # doesn't sit down for half the wait budget before the fallback fires. Both the
 # no-app relaunch and the fallback reuse the same python-launch string. (All eval'd.)
-GW_PY_LAUNCH="cd ${SAFE_REPO_ROOT} && mkdir -p logs && nohup python3 gateway.py --port ${GW_PORT} >> logs/gateway-console.log 2>&1 & disown"
+#
+# The `{ ...; }` group around the backgrounded python is load-bearing: `&` binds
+# LOOSER than `&&`, so an ungrouped `cd X && mkdir -p logs && nohup python3 ... &
+# disown` backgrounds the WHOLE `cd && mkdir && nohup` list as one job and runs
+# `disown` in the parent. That forks a bash subshell which then blocks in wait()
+# on the gateway for its entire lifetime, with two consequences:
+#   1. the gateway hangs off a stray shell instead of init, so any process-tree
+#      kill of that shell takes the gateway down with it; and
+#   2. the subshell inherits this script's stdout, so `restart-gateway.sh | tail`
+#      never sees EOF and appears to hang forever even after the script printed
+#      its result and exited.
+# Grouping binds `&` to the python alone and puts `disown` in the same shell, so
+# the gateway reparents straight to init and no subshell survives. `</dev/null`
+# detaches stdin for the same reason. Verified: ungrouped leaves a `bash <script>`
+# parent; grouped reparents to pid 1 with no leftover shell.
+GW_PY_LAUNCH="cd ${SAFE_REPO_ROOT} && mkdir -p logs && { nohup python3 gateway.py --port ${GW_PORT} >> logs/gateway-console.log 2>&1 </dev/null & disown; }"
 if [ -d "${REPO_ROOT}/CopilotGateway.app" ]; then
   GW_RELAUNCH_CMD="${GW_RELAUNCH_CMD:-open ${SAFE_REPO_ROOT}/CopilotGateway.app}"
 else
