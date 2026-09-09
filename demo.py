@@ -751,6 +751,33 @@ class DemoHandler(http.server.BaseHTTPRequestHandler):
 def main():
     global GATEWAY_URL
 
+    # Windows / redirected-pipe safety: gateway.py spawns us with stdout
+    # redirected to logs/<session>/demo.log, so Python falls back to the locale
+    # codec (cp1252 on Windows), which can't encode the Unicode box-drawing rule
+    # in the banner below. That raised UnicodeEncodeError and killed the demo app
+    # before it bound port 8788 — the gateway's log showed "demo app started" and
+    # the UI was silently unreachable. Same failure mode as the gateway's own
+    # banner crash; mirror its fix. Force UTF-8 with a lossy fallback so banner
+    # prints can never crash startup.
+    #
+    # line_buffering=True because that same redirect makes stdout block-buffered
+    # (~8KB), so the short banner would sit in the buffer and never reach
+    # demo.log while the process runs — a healthy demo and one that never
+    # started would both leave a 0-byte log. Before this fix the crash itself
+    # flushed on interpreter shutdown, which is the only reason demo.log ever
+    # had content; without line buffering, fixing the crash would silently
+    # remove the only startup evidence the log ever carried.
+    for _stream in (sys.stdout, sys.stderr):
+        # In GUI/windowed contexts (pythonw.exe, some frozen exes) std streams
+        # can be None — skip explicitly rather than lean on the except below.
+        if _stream is None:
+            continue
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace",
+                                line_buffering=True)
+        except (AttributeError, OSError, ValueError):
+            pass
+
     parser = argparse.ArgumentParser(description="Copilot Gateway Demo")
     parser.add_argument("--port", type=int, default=DEMO_PORT)
     parser.add_argument("--host", default=DEMO_HOST)
