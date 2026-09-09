@@ -16,7 +16,8 @@ Endpoints:
   POST /chat/completions       — OpenAI Chat Completions API (alias)
   POST /v1/responses           — OpenAI Responses API (GPT-5.4)
   GET  /health                 — health check
-  GET  /stats                  — token usage stats
+  GET  /stats                  — in-memory token usage stats
+  GET  /usage?days=N           — durable exact usage ledger
   GET  /logs                   — recent gateway log lines
 
 Usage:
@@ -35,13 +36,15 @@ import logging
 import os
 import pathlib
 import secrets
+import sqlite3
 import subprocess
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 
 try:
     import zstandard as _zstd
@@ -58,6 +61,9 @@ GATEWAY_VERSION = "1.3.0"  # Codex CLI 405 fallback, HTTP/1.1 correctness fixes,
 LISTEN_HOST = os.environ.get("GATEWAY_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("GATEWAY_PORT", "8787"))
 UPSTREAM = os.environ.get("GATEWAY_UPSTREAM", "https://api.githubcopilot.com")
+COPILOT_MODELS_API_VERSION = os.environ.get(
+    "COPILOT_MODELS_API_VERSION", "2026-08-01"
+)
 HERE = pathlib.Path(__file__).parent
 LOG_DIR = HERE / "logs"
 
@@ -395,14 +401,28 @@ class ModelsCache:
         try:
             upstream = _get_upstream()
             headers = {"Authorization": f"Bearer {token_mgr.token}",
-                       "Accept": "application/json"}
+                       "Accept": "application/json",
+                       "X-GitHub-Api-Version": COPILOT_MODELS_API_VERSION}
             if token_mgr.mode == "vscode":
                 headers["Copilot-Integration-Id"] = "vscode-chat"
             else:
                 headers["Copilot-Integration-Id"] = "copilot-developer-cli"
-            req = urllib.request.Request(f"{upstream}/models", headers=headers)
-            resp = urllib.request.urlopen(req, timeout=15)
-            raw = json.loads(resp.read())
+            models_url = f"{upstream}/models"
+            req = urllib.request.Request(models_url, headers=headers)
+            try:
+                resp = urllib.request.urlopen(req, timeout=15)
+            except urllib.error.HTTPError as e:
+                if e.code not in (400, 406):
+                    raise
+                e.close()
+                log(f"models API version {COPILOT_MODELS_API_VERSION} rejected "
+                    f"with HTTP {e.code}; retrying unversioned catalog")
+                fallback_headers = dict(headers)
+                fallback_headers.pop("X-GitHub-Api-Version", None)
+                req = urllib.request.Request(models_url, headers=fallback_headers)
+                resp = urllib.request.urlopen(req, timeout=15)
+            with resp:
+                raw = json.loads(resp.read())
             self._data = raw.get("data", raw) if isinstance(raw, dict) else raw
             self._last_fetch = time.time()
             log(f"models cache refreshed: {len(self._data)} models from {upstream}")
@@ -484,7 +504,8 @@ def _classify_origin(client_ip: str, header_value: str | None = None) -> str:
 
 # ─── Request Stats Tracker ────────────────────────────────────────────────────
 
-# Billing multipliers from Copilot CLI internals (nano-AIU based)
+# Legacy request-level estimates from Copilot CLI internals (nano-AIU based).
+# These are independent of the live per-token billing metadata in /models.
 BILLING_MULTIPLIERS = {
     "claude-haiku-4.5": 0.333,
     "claude-haiku-4-5-20251001": 0.333,
@@ -589,67 +610,523 @@ class RequestStats:
 # Global stats — initialized in main()
 request_stats = None  # type: RequestStats | None
 
+
+# ─── Durable Usage Ledger ─────────────────────────────────────────────────────
+
+USAGE_DB = LOG_DIR / "usage.sqlite3"
+
+
+def _nonnegative_int(value, default=0):
+    """Return an exact non-negative integer for untrusted usage fields."""
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        parsed = Decimal(str(value))
+        if (not parsed.is_finite() or parsed < 0
+                or parsed != parsed.to_integral_value()):
+            return default
+        return int(parsed)
+    except (InvalidOperation, TypeError, ValueError, OverflowError):
+        return default
+
+
+def _optional_nonnegative_int(value):
+    if value is None:
+        return None
+    return _nonnegative_int(value, default=None)
+
+
+def _decimal(value):
+    try:
+        result = Decimal(str(value))
+        if not result.is_finite() or result < 0:
+            return Decimal(0)
+        return result
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(0)
+
+
+def _usage_endpoint(path: str) -> str:
+    """Persist only known API endpoint names, never arbitrary client paths."""
+    clean = path.split("?", 1)[0]
+    if clean in ("/v1/messages", "/messages"):
+        return "/v1/messages"
+    if clean in ("/v1/chat/completions", "/chat/completions"):
+        return "/v1/chat/completions"
+    if clean in ("/v1/responses", "/responses"):
+        return "/v1/responses"
+    return "other"
+
+
+def _merge_token_detail_snapshots(current: list, incoming: list) -> list:
+    """Merge cumulative token-detail snapshots without counting repeats twice.
+
+    Copilot can repeat the complete copilot_usage object in multiple SSE events.
+    Within each model/type/rate bucket, retain the greatest cumulative count
+    observed instead of summing snapshots.
+    """
+    merged = {}
+    for source in (current, incoming):
+        snapshot = {}
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if not isinstance(item, dict):
+                continue
+            model = str(item.get("model") or "unknown")
+            token_type = str(item.get("token_type") or "unknown")
+            batch_size = _nonnegative_int(item.get("batch_size"), 0)
+            # Numeric spellings such as 10 and 10.0 describe the same rate;
+            # normalize them so repeated snapshots cannot create two buckets.
+            cost = format(_decimal(item.get("cost_per_batch")), "f")
+            key = (model, token_type, batch_size, cost)
+            count = _nonnegative_int(item.get("token_count"), 0)
+            snapshot[key] = snapshot.get(key, 0) + count
+        for key, count in snapshot.items():
+            if key not in merged or count > merged[key]:
+                merged[key] = count
+    return [
+        {
+            "model": key[0],
+            "token_type": key[1],
+            "batch_size": key[2],
+            "cost_per_batch": key[3],
+            "token_count": count,
+        }
+        for key, count in sorted(merged.items())
+    ]
+
+
+class UsageStore:
+    """Thread-safe, best-effort SQLite ledger for exact Copilot usage."""
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS requests (
+            request_id TEXT PRIMARY KEY,
+            timestamp_utc TEXT NOT NULL,
+            day_utc TEXT NOT NULL,
+            requested_model TEXT NOT NULL,
+            endpoint TEXT NOT NULL,
+            origin TEXT NOT NULL,
+            http_success INTEGER NOT NULL,
+            http_status INTEGER,
+            fallback_input_tokens INTEGER NOT NULL,
+            fallback_output_tokens INTEGER NOT NULL,
+            total_nano_aiu INTEGER,
+            ai_credits REAL
+        );
+
+        CREATE TABLE IF NOT EXISTS request_model_usage (
+            request_id TEXT NOT NULL,
+            actual_model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cache_write_tokens INTEGER NOT NULL,
+            cache_write_1h_tokens INTEGER NOT NULL,
+            raw_nano_aiu TEXT,
+            allocated_nano_aiu INTEGER,
+            allocated_ai_credits REAL,
+            PRIMARY KEY (request_id, actual_model),
+            FOREIGN KEY (request_id) REFERENCES requests(request_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_requests_day ON requests(day_utc);
+        CREATE INDEX IF NOT EXISTS idx_requests_timestamp ON requests(timestamp_utc);
+        CREATE INDEX IF NOT EXISTS idx_requests_requested_model
+            ON requests(requested_model);
+        CREATE INDEX IF NOT EXISTS idx_request_model_usage_model
+            ON request_model_usage(actual_model);
+    """
+
+    _TOKEN_COLUMNS = {
+        "input": "input_tokens",
+        "input_tokens": "input_tokens",
+        "prompt": "input_tokens",
+        "prompt_tokens": "input_tokens",
+        "output": "output_tokens",
+        "output_tokens": "output_tokens",
+        "completion": "output_tokens",
+        "completion_tokens": "output_tokens",
+        "cache_read": "cache_read_tokens",
+        "cache_read_tokens": "cache_read_tokens",
+        "cache_write": "cache_write_tokens",
+        "cache_write_tokens": "cache_write_tokens",
+        "cache_write_1h": "cache_write_1h_tokens",
+        "cache_write_1h_tokens": "cache_write_1h_tokens",
+    }
+
+    def __init__(self, path: pathlib.Path):
+        self.path = path
+        self._lock = threading.Lock()
+        self._conn = None
+        conn = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(path), timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = FULL")
+            conn.executescript(self._SCHEMA)
+            conn.commit()
+            self._conn = conn
+            log(f"usage ledger initialized: {path}")
+        except Exception as e:
+            log(f"ERROR: usage ledger initialization failed: {e}")
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def close(self):
+        """Close the ledger connection during an orderly gateway shutdown."""
+        with self._lock:
+            connection = self._conn
+            self._conn = None
+            if connection is not None:
+                connection.close()
+
+    @staticmethod
+    def _model_rows(requested_model: str, fallback_input: int,
+                    fallback_output: int, token_details: list,
+                    total_nano_aiu):
+        rows = {}
+        has_details = isinstance(token_details, list) and bool(token_details)
+        if has_details:
+            for item in token_details:
+                if not isinstance(item, dict):
+                    continue
+                model = str(item.get("model") or requested_model or "unknown")
+                row = rows.setdefault(model, {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_write_tokens": 0,
+                    "cache_write_1h_tokens": 0,
+                    "raw_nano_aiu": Decimal(0),
+                })
+                count = _nonnegative_int(item.get("token_count"), 0)
+                column = UsageStore._TOKEN_COLUMNS.get(
+                    str(item.get("token_type") or "").lower()
+                )
+                if column:
+                    row[column] += count
+                batch_size = _nonnegative_int(item.get("batch_size"), 0)
+                if batch_size:
+                    row["raw_nano_aiu"] += (
+                        Decimal(count) * _decimal(item.get("cost_per_batch"))
+                        / Decimal(batch_size)
+                    )
+
+        # Without actual-model details, retain useful model/token attribution
+        # under the requested model. This also gives failed requests a model row.
+        if not rows:
+            rows[str(requested_model or "unknown")] = {
+                "input_tokens": fallback_input,
+                "output_tokens": fallback_output,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cache_write_1h_tokens": 0,
+                "raw_nano_aiu": Decimal(0),
+            }
+
+        allocations = {model: None for model in rows}
+        if total_nano_aiu is not None:
+            total = _nonnegative_int(total_nano_aiu, 0)
+            if len(rows) == 1:
+                allocations[next(iter(rows))] = total
+            else:
+                weights = {m: row["raw_nano_aiu"] for m, row in rows.items()}
+                weight_total = sum(weights.values(), Decimal(0))
+                if weight_total <= 0:
+                    weights = {
+                        m: Decimal(sum(row[c] for c in (
+                            "input_tokens", "output_tokens", "cache_read_tokens",
+                            "cache_write_tokens", "cache_write_1h_tokens",
+                        )))
+                        for m, row in rows.items()
+                    }
+                    weight_total = sum(weights.values(), Decimal(0))
+                if weight_total <= 0:
+                    weights = {m: Decimal(1) for m in rows}
+                    weight_total = Decimal(len(rows))
+
+                exact = {m: Decimal(total) * weights[m] / weight_total for m in rows}
+                allocations = {
+                    m: int(value.to_integral_value(rounding=ROUND_FLOOR))
+                    for m, value in exact.items()
+                }
+                remainder = total - sum(allocations.values())
+                order = sorted(rows, key=lambda m: (-(exact[m] - allocations[m]), m))
+                for model in order[:remainder]:
+                    allocations[model] += 1
+
+        result = []
+        for model, row in rows.items():
+            allocated = allocations[model]
+            result.append((
+                model,
+                row["input_tokens"], row["output_tokens"],
+                row["cache_read_tokens"], row["cache_write_tokens"],
+                row["cache_write_1h_tokens"], format(row["raw_nano_aiu"], "f"),
+                allocated,
+                allocated / 1_000_000_000 if allocated is not None else None,
+            ))
+        return result
+
+    def record(self, request_id: str, requested_model: str, endpoint: str,
+               origin: str, success: bool, http_status, fallback_input_tokens=0,
+               fallback_output_tokens=0, total_nano_aiu=None,
+               token_details=None):
+        """Persist one request; failures are logged and deliberately swallowed."""
+        if self._conn is None:
+            log("ERROR: usage ledger write skipped: store is unavailable")
+            return
+        try:
+            now = datetime.utcnow()
+            timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            day = now.strftime("%Y-%m-%d")
+            fallback_input = _nonnegative_int(fallback_input_tokens, 0)
+            fallback_output = _nonnegative_int(fallback_output_tokens, 0)
+            total_nano = _optional_nonnegative_int(total_nano_aiu)
+            status = _optional_nonnegative_int(http_status)
+            rows = self._model_rows(
+                str(requested_model or "unknown"), fallback_input,
+                fallback_output, token_details or [], total_nano,
+            )
+            with self._lock:
+                with self._conn:
+                    self._conn.execute(
+                        """INSERT INTO requests (
+                               request_id, timestamp_utc, day_utc, requested_model,
+                               endpoint, origin, http_success, http_status,
+                               fallback_input_tokens, fallback_output_tokens,
+                               total_nano_aiu, ai_credits
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            request_id, timestamp, day,
+                            str(requested_model or "unknown"), str(endpoint or ""),
+                            origin if origin in ORIGINS else "other",
+                            1 if success else 0, status, fallback_input,
+                            fallback_output, total_nano,
+                            total_nano / 1_000_000_000
+                            if total_nano is not None else None,
+                        ),
+                    )
+                    self._conn.executemany(
+                        """INSERT INTO request_model_usage (
+                               request_id, actual_model, input_tokens, output_tokens,
+                               cache_read_tokens, cache_write_tokens,
+                               cache_write_1h_tokens, raw_nano_aiu,
+                               allocated_nano_aiu, allocated_ai_credits
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        [(request_id,) + row for row in rows],
+                    )
+        except Exception as e:
+            log(f"ERROR: usage ledger write failed for {request_id}: {e}")
+
+    @staticmethod
+    def _metrics(row):
+        known = int(row["requests_with_actual_cost"] or 0)
+        requests = int(row["requests"] or 0)
+        nano = row["known_nano_aiu"]
+        return {
+            "requests": requests,
+            "succeeded": int(row["succeeded"] or 0),
+            "failed": int(row["failed"] or 0),
+            "input_tokens": int(row["input_tokens"] or 0),
+            "output_tokens": int(row["output_tokens"] or 0),
+            "cache_read_tokens": int(row["cache_read_tokens"] or 0),
+            "cache_write_tokens": int(row["cache_write_tokens"] or 0),
+            "cache_write_1h_tokens": int(row["cache_write_1h_tokens"] or 0),
+            "ai_credits": int(nano) / 1_000_000_000 if nano is not None else None,
+            "requests_with_actual_cost": known,
+            "requests_without_actual_cost": requests - known,
+        }
+
+    def aggregate(self, days: int):
+        """Return UTC request/day/model aggregates, or None on read failure."""
+        if self._conn is None:
+            log("ERROR: usage ledger read skipped: store is unavailable")
+            return None
+        try:
+            today = datetime.utcnow().date()
+            from_day = today - timedelta(days=days - 1)
+            start = from_day.isoformat()
+            end = today.isoformat()
+            request_select = """
+                COUNT(*) AS requests,
+                COALESCE(SUM(http_success), 0) AS succeeded,
+                COALESCE(SUM(CASE WHEN http_success = 0 THEN 1 ELSE 0 END), 0) AS failed,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+                COALESCE(SUM(cache_write_1h_tokens), 0) AS cache_write_1h_tokens,
+                SUM(total_nano_aiu) AS known_nano_aiu,
+                COUNT(total_nano_aiu) AS requests_with_actual_cost
+            """
+            request_cte = """
+                WITH model_per_request AS (
+                    SELECT request_id,
+                           SUM(input_tokens) AS input_tokens,
+                           SUM(output_tokens) AS output_tokens,
+                           SUM(cache_read_tokens) AS cache_read_tokens,
+                           SUM(cache_write_tokens) AS cache_write_tokens,
+                           SUM(cache_write_1h_tokens) AS cache_write_1h_tokens
+                    FROM request_model_usage GROUP BY request_id
+                ), ranged AS (
+                    SELECT r.request_id, r.timestamp_utc, r.day_utc,
+                           r.requested_model, r.endpoint, r.origin,
+                           r.http_success, r.http_status, r.total_nano_aiu,
+                           r.ai_credits,
+                           COALESCE(m.input_tokens, r.fallback_input_tokens) AS input_tokens,
+                           COALESCE(m.output_tokens, r.fallback_output_tokens) AS output_tokens,
+                           COALESCE(m.cache_read_tokens, 0) AS cache_read_tokens,
+                           COALESCE(m.cache_write_tokens, 0) AS cache_write_tokens,
+                           COALESCE(m.cache_write_1h_tokens, 0) AS cache_write_1h_tokens
+                    FROM requests r
+                    LEFT JOIN model_per_request m ON m.request_id = r.request_id
+                    WHERE r.day_utc BETWEEN ? AND ?
+                )
+            """
+            model_select = """
+                COUNT(*) AS requests,
+                COALESCE(SUM(r.http_success), 0) AS succeeded,
+                COALESCE(SUM(CASE WHEN r.http_success = 0 THEN 1 ELSE 0 END), 0) AS failed,
+                COALESCE(SUM(m.input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(m.output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(m.cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(m.cache_write_tokens), 0) AS cache_write_tokens,
+                COALESCE(SUM(m.cache_write_1h_tokens), 0) AS cache_write_1h_tokens,
+                SUM(m.allocated_nano_aiu) AS known_nano_aiu,
+                COUNT(m.allocated_nano_aiu) AS requests_with_actual_cost
+            """
+            with self._lock:
+                self._conn.row_factory = sqlite3.Row
+                total_row = self._conn.execute(
+                    request_cte + "SELECT " + request_select + " FROM ranged",
+                    (start, end),
+                ).fetchone()
+                daily_rows = self._conn.execute(
+                    request_cte + "SELECT day_utc AS date, " + request_select
+                    + " FROM ranged GROUP BY day_utc ORDER BY day_utc ASC",
+                    (start, end),
+                ).fetchall()
+                by_model_rows = self._conn.execute(
+                    "SELECT m.actual_model AS model, " + model_select
+                    + " FROM request_model_usage m JOIN requests r "
+                      "ON r.request_id = m.request_id "
+                      "WHERE r.day_utc BETWEEN ? AND ? GROUP BY m.actual_model "
+                      "ORDER BY known_nano_aiu DESC, model ASC",
+                    (start, end),
+                ).fetchall()
+                daily_model_rows = self._conn.execute(
+                    "SELECT r.day_utc AS date, m.actual_model AS model, "
+                    + model_select
+                    + " FROM request_model_usage m JOIN requests r "
+                      "ON r.request_id = m.request_id "
+                      "WHERE r.day_utc BETWEEN ? AND ? "
+                      "GROUP BY r.day_utc, m.actual_model "
+                      "ORDER BY date DESC, known_nano_aiu DESC, model ASC",
+                    (start, end),
+                ).fetchall()
+
+            def shaped(rows, dimensions):
+                result = []
+                for row in rows:
+                    item = {name: row[name] for name in dimensions}
+                    item.update(self._metrics(row))
+                    result.append(item)
+                return result
+
+            return {
+                "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "timezone": "UTC",
+                "range": {"days": days, "from": start, "to": end},
+                "totals": self._metrics(total_row),
+                "daily": shaped(daily_rows, ("date",)),
+                "by_model": shaped(by_model_rows, ("model",)),
+                "daily_models": shaped(daily_model_rows, ("date", "model")),
+            }
+        except Exception as e:
+            log(f"ERROR: usage ledger read failed: {e}")
+            return None
+
+
+# Global durable ledger — initialized in main().
+usage_store = None  # type: UsageStore | None
+
 # ─── Usage Extraction ─────────────────────────────────────────────────────────
 
+def _copilot_usage_fields(container: dict) -> tuple:
+    """Return (exact nano-AIU or None, token details) without inventing cost."""
+    copilot_usage = container.get("copilot_usage", {})
+    if not isinstance(copilot_usage, dict):
+        return None, []
+    nano_aiu = _optional_nonnegative_int(copilot_usage.get("total_nano_aiu"))
+    details = copilot_usage.get("token_details", [])
+    return nano_aiu, details if isinstance(details, list) else []
+
+
 def _extract_usage_from_response(resp_json: dict, path: str) -> tuple:
-    """Extract (input_tokens, output_tokens, nano_aiu) from a non-streamed response."""
-    nano_aiu = 0
-    copilot_usage = resp_json.get("copilot_usage", {})
-    if copilot_usage:
-        nano_aiu = copilot_usage.get("total_nano_aiu", 0)
+    """Extract fallback tokens plus exact Copilot cost details."""
+    nano_aiu, token_details = _copilot_usage_fields(resp_json)
 
     if "/messages" in path:
         # Anthropic format
         usage = resp_json.get("usage", {})
         return (usage.get("input_tokens", 0),
-                usage.get("output_tokens", 0), nano_aiu)
+                usage.get("output_tokens", 0), nano_aiu, token_details)
     elif "/responses" in path:
         # OpenAI Responses format
         usage = resp_json.get("usage", {})
         return (usage.get("input_tokens", usage.get("prompt_tokens", 0)),
                 usage.get("output_tokens", usage.get("completion_tokens", 0)),
-                nano_aiu)
+                nano_aiu, token_details)
     else:
         # OpenAI Chat Completions format
         usage = resp_json.get("usage", {})
         return (usage.get("prompt_tokens", 0),
-                usage.get("completion_tokens", 0), nano_aiu)
+                usage.get("completion_tokens", 0), nano_aiu, token_details)
 
 
 def _extract_usage_from_event(event: dict, path: str) -> tuple:
-    """Extract (input_tokens, output_tokens, nano_aiu) from a single SSE event."""
-    nano_aiu = 0
-    copilot_usage = event.get("copilot_usage", {})
-    if copilot_usage:
-        nano_aiu = copilot_usage.get("total_nano_aiu", 0)
+    """Extract one cumulative SSE usage snapshot, including token details."""
+    nano_aiu, token_details = _copilot_usage_fields(event)
 
     if "/messages" in path:
         # Anthropic SSE: message_start has input, message_delta has output
         evt_type = event.get("type", "")
         if evt_type == "message_start":
             msg = event.get("message", {})
+            if nano_aiu is None:
+                nano_aiu, token_details = _copilot_usage_fields(msg)
             usage = msg.get("usage", {})
-            return (usage.get("input_tokens", 0), 0, nano_aiu)
+            return (usage.get("input_tokens", 0), 0, nano_aiu, token_details)
         elif evt_type == "message_delta":
             usage = event.get("usage", {})
-            return (0, usage.get("output_tokens", 0), nano_aiu)
+            return (0, usage.get("output_tokens", 0), nano_aiu, token_details)
     elif "/responses" in path:
         # OpenAI Responses SSE: response.completed has usage
         evt_type = event.get("type", "")
         if evt_type == "response.completed":
             resp = event.get("response", {})
+            if nano_aiu is None:
+                nano_aiu, token_details = _copilot_usage_fields(resp)
             usage = resp.get("usage", {})
             return (usage.get("input_tokens", usage.get("prompt_tokens", 0)),
                     usage.get("output_tokens", usage.get("completion_tokens", 0)),
-                    nano_aiu)
+                    nano_aiu, token_details)
     else:
-        # OpenAI Chat SSE: final chunk may have usage
+        # OpenAI Chat SSE: final chunks can repeat cumulative usage.
         usage = event.get("usage", {})
         if usage:
             return (usage.get("prompt_tokens", 0),
-                    usage.get("completion_tokens", 0), nano_aiu)
+                    usage.get("completion_tokens", 0), nano_aiu, token_details)
 
-    return (0, 0, nano_aiu)
+    return (0, 0, nano_aiu, token_details)
 
 
 # ─── Gateway Handler ──────────────────────────────────────────────────────────
@@ -683,6 +1160,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self._handle_health()
         elif path == "/stats":
             self._handle_stats()
+        elif path == "/usage":
+            self._handle_usage()
         elif path == "/logs":
             self._handle_logs()
         elif path in ("/v1/responses", "/responses"):
@@ -754,6 +1233,11 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             "reasoning_efforts": supports.get("reasoning_effort", []),
             "model_picker_enabled": m.get("model_picker_enabled", False),
             "model_picker_category": m.get("model_picker_category"),
+            # Live catalog pricing is passed through verbatim. Keep its
+            # snake_case shape and per-token values separate from the legacy
+            # request-level BILLING_MULTIPLIERS estimates used by /stats.
+            "model_picker_price_category": m.get("model_picker_price_category"),
+            "billing": m.get("billing"),
             "preview": m.get("preview", False),
         }
 
@@ -798,6 +1282,30 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # ── /usage ──
+
+    def _handle_usage(self):
+        import urllib.parse as urlparse
+        qs = urlparse.parse_qs(urlparse.urlparse(self.path).query)
+        try:
+            days = int(qs.get("days", ["30"])[0])
+        except (TypeError, ValueError, OverflowError):
+            days = 30
+        days = max(1, min(days, 3650))
+
+        report = usage_store.aggregate(days) if usage_store else None
+        if report is None:
+            body = b'{"error":"usage ledger unavailable"}'
+            self.send_response(503)
+        else:
+            body = json.dumps(report, indent=2).encode()
+            self.send_response(200)
+        self._cors_headers()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     # ── /logs ──
 
     def _handle_logs(self):
@@ -835,7 +1343,10 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
 
     def _forward(self):
         method = self.command
-        path = self.PATH_MAP.get(self.path.split("?")[0], self.path)
+        client_path = self.path.split("?", 1)[0]
+        path = self.PATH_MAP.get(client_path, self.path)
+        endpoint = _usage_endpoint(client_path)
+        request_id = secrets.token_hex(16)
         origin = _classify_origin(self.client_address[0],
                                   self.headers.get("X-Gateway-Origin"))
 
@@ -858,8 +1369,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
                     self.wfile.write(err)
-                    if request_stats:
-                        request_stats.record_failure(origin=origin)
+                    self._record_failure(request_id, "unknown", endpoint,
+                                         origin, 400)
                     return
             elif encoding == "gzip":
                 try:
@@ -873,8 +1384,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header("Content-Length", str(len(err)))
                     self.end_headers()
                     self.wfile.write(err)
-                    if request_stats:
-                        request_stats.record_failure(origin=origin)
+                    self._record_failure(request_id, "unknown", endpoint,
+                                         origin, 400)
                     return
 
         # Parse request body for stream flag and model name
@@ -1043,8 +1554,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body_out)
             log(f"  ← {error_code or 502} error: {body_out[:500]} (origin={origin})")
-            if request_stats:
-                request_stats.record_failure(origin=origin)
+            self._record_failure(request_id, model, endpoint, origin,
+                                 error_code or 502)
             return
 
         # Forward success response.
@@ -1068,7 +1579,8 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 total = 0
                 input_tokens = 0
                 output_tokens = 0
-                nano_aiu = 0
+                nano_aiu = None
+                token_details = []
                 line_buf = b""
                 while True:
                     chunk = resp.read(4096)
@@ -1083,19 +1595,26 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                     while b"\n" in line_buf:
                         line, line_buf = line_buf.split(b"\n", 1)
                         line_str = line.decode("utf-8", errors="replace").strip()
-                        if line_str.startswith("data: ") and "usage" in line_str:
+                        if line_str.startswith("data: "):
                             try:
                                 event = json.loads(line_str[6:])
-                                it, ot, na = _extract_usage_from_event(event, path)
-                                input_tokens += it
-                                output_tokens += ot
-                                nano_aiu = max(nano_aiu, na)
+                                it, ot, na, details = _extract_usage_from_event(event, path)
+                                input_tokens = max(input_tokens, _nonnegative_int(it, 0))
+                                output_tokens = max(output_tokens, _nonnegative_int(ot, 0))
+                                if na is not None:
+                                    nano_aiu = na if nano_aiu is None else max(nano_aiu, na)
+                                token_details = _merge_token_detail_snapshots(
+                                    token_details, details
+                                )
                             except (json.JSONDecodeError, ValueError):
                                 pass
 
                 log(f"  ← {resp.status} streamed {total} bytes"
                     f" (in={input_tokens}, out={output_tokens}, origin={origin})")
-                self._record_usage(model, input_tokens, output_tokens, nano_aiu, origin)
+                self._record_usage(
+                    request_id, model, endpoint, resp.status, input_tokens,
+                    output_tokens, nano_aiu, token_details, origin,
+                )
             else:
                 # Buffer the body so we can send an honest Content-Length.
                 data = resp.read()
@@ -1103,28 +1622,51 @@ class GatewayHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
-                input_tokens, output_tokens, nano_aiu = 0, 0, 0
+                input_tokens, output_tokens, nano_aiu, token_details = 0, 0, None, []
                 try:
                     resp_json = json.loads(data)
-                    input_tokens, output_tokens, nano_aiu = _extract_usage_from_response(
-                        resp_json, path)
+                    input_tokens, output_tokens, nano_aiu, token_details = (
+                        _extract_usage_from_response(resp_json, path)
+                    )
                 except (json.JSONDecodeError, ValueError):
                     pass
                 log(f"  ← {resp.status} ({len(data)} bytes)"
                     f" (in={input_tokens}, out={output_tokens}, origin={origin})")
-                self._record_usage(model, input_tokens, output_tokens, nano_aiu, origin)
+                self._record_usage(
+                    request_id, model, endpoint, resp.status, input_tokens,
+                    output_tokens, nano_aiu, token_details, origin,
+                )
 
-    def _record_usage(self, model: str, input_tokens: int, output_tokens: int,
-                      nano_aiu: int, origin: str = "other"):
-        """Record usage into global stats tracker."""
-        if not request_stats:
-            return
-        if input_tokens or output_tokens:
-            request_stats.record_success(model, input_tokens, output_tokens, nano_aiu,
-                                         origin=origin)
-        else:
-            request_stats.record_success(model, 0, 0, 0, origin=origin)
-            request_stats.record_parse_failure()
+    def _record_usage(self, request_id: str, model: str, endpoint: str,
+                      http_status: int, input_tokens: int, output_tokens: int,
+                      nano_aiu, token_details: list, origin: str = "other"):
+        """Record successful usage in both backward-compatible and durable stores."""
+        input_tokens = _nonnegative_int(input_tokens, 0)
+        output_tokens = _nonnegative_int(output_tokens, 0)
+        nano_aiu = _optional_nonnegative_int(nano_aiu)
+        if request_stats:
+            if input_tokens or output_tokens:
+                request_stats.record_success(
+                    model, input_tokens, output_tokens, nano_aiu or 0,
+                    origin=origin,
+                )
+            else:
+                request_stats.record_success(model, 0, 0, 0, origin=origin)
+                request_stats.record_parse_failure()
+        if usage_store:
+            usage_store.record(
+                request_id, model, endpoint, origin, True, http_status,
+                input_tokens, output_tokens, nano_aiu, token_details,
+            )
+
+    def _record_failure(self, request_id: str, model: str, endpoint: str,
+                        origin: str, http_status: int):
+        if request_stats:
+            request_stats.record_failure(origin=origin)
+        if usage_store:
+            usage_store.record(
+                request_id, model, endpoint, origin, False, http_status,
+            )
 
     def _do_upstream(self, method, url, headers, body):
         """Returns (response, None, None) on success or (None, error_body, status_code) on error."""
@@ -1210,7 +1752,7 @@ def _load_token() -> tuple[str, str] | tuple[None, None]:
 
 
 def main():
-    global token_mgr, request_stats
+    global token_mgr, request_stats, usage_store
 
     # Windows / redirected-pipe safety: when stdout is piped to a file or
     # DEVNULL (the tray spawns us with stdout=stderr=DEVNULL), Python falls
@@ -1246,8 +1788,9 @@ def main():
     # Set up per-session logging (must happen before any log() calls)
     session_dir = setup_logging()
 
-    # Initialize request stats tracker
+    # Initialize in-memory stats and the independent durable usage ledger.
     request_stats = RequestStats()
+    usage_store = UsageStore(USAGE_DB)
 
     # Resolve mode and token
     saved_token, saved_mode = _load_token()
@@ -1299,6 +1842,7 @@ def main():
     print("║    POST /v1/responses        — OpenAI Responses API      ║")
     print("║    GET  /health              — health check              ║")
     print("║    GET  /stats               — token usage stats         ║")
+    print("║    GET  /usage?days=N        — durable exact usage       ║")
     print("║    GET  /logs                — recent gateway log lines  ║")
     print("╠══════════════════════════════════════════════════════════╣")
     print("║  Usage:  any client → http://localhost:8787              ║")
@@ -1367,6 +1911,7 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n[gateway] shutting down.")
+    finally:
         server.server_close()
         if demo_proc:
             demo_proc.terminate()
@@ -1374,6 +1919,8 @@ def main():
             demo_log_file.close()
         if menubar_proc:
             menubar_proc.terminate()
+        if usage_store:
+            usage_store.close()
 
 
 if __name__ == "__main__":

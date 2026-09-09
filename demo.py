@@ -14,6 +14,8 @@ Usage:
 Open http://localhost:8788 in your browser.
 """
 
+from __future__ import annotations
+
 import argparse
 import http.server
 import json
@@ -37,6 +39,8 @@ DEMO_HOST = "127.0.0.1"
 DEMO_PORT = 8788
 GATEWAY_URL = "http://127.0.0.1:8787"
 GATEWAY_UPSTREAM = "https://api.githubcopilot.com"
+COPILOT_MODELS_API_VERSION = os.environ.get(
+    "COPILOT_MODELS_API_VERSION", "2026-08-01")
 HERE = pathlib.Path(__file__).parent
 LOG_DIR = HERE / "logs"
 
@@ -187,8 +191,24 @@ def get_models(mode: str = "vscode") -> list:
     try:
         headers = {"Authorization": f"Bearer {cfg['token']}", "Accept": "application/json"}
         headers["Copilot-Integration-Id"] = "vscode-chat" if mode == "vscode" else "copilot-developer-cli"
-        req = urllib.request.Request(f"{cfg['api_base']}/models", headers=headers)
-        resp = json.loads(urllib.request.urlopen(req, timeout=15).read())
+        headers["X-GitHub-Api-Version"] = COPILOT_MODELS_API_VERSION
+        models_url = f"{cfg['api_base']}/models"
+        req = urllib.request.Request(models_url, headers=headers)
+        try:
+            response = urllib.request.urlopen(req, timeout=15)
+        except urllib.error.HTTPError as e:
+            if e.code not in (400, 406):
+                raise
+            e.close()
+            fallback_headers = dict(headers)
+            del fallback_headers["X-GitHub-Api-Version"]
+            logger.warning(
+                f"models fetch [{mode}] rejected API version "
+                f"{COPILOT_MODELS_API_VERSION} with HTTP {e.code}; retrying unversioned")
+            req = urllib.request.Request(models_url, headers=fallback_headers)
+            response = urllib.request.urlopen(req, timeout=15)
+        with response:
+            resp = json.loads(response.read())
         models = resp.get("data", resp) if isinstance(resp, dict) else resp
         with _models_lock:
             _models_cache[mode] = models
@@ -380,6 +400,14 @@ class DemoHandler(http.server.BaseHTTPRequestHandler):
                 self._handle_sse()
             elif path == "/api/gateway/stats":
                 self._proxy_gateway("/stats", "application/json")
+            elif path == "/api/gateway/usage":
+                # Forward only a validated decimal day count; ignore all other query params.
+                from urllib.parse import urlparse, parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                days_val = qs.get("days", ["30"])[0]
+                days = int(days_val) if days_val.isdecimal() else 30
+                days = max(1, min(days, 3650))
+                self._proxy_gateway(f"/usage?days={days}", "application/json")
             elif path == "/api/gateway/logs":
                 # Forward ?n=<int> if present; default 200 (gateway clamps to 2000)
                 from urllib.parse import urlparse, parse_qs
@@ -438,6 +466,8 @@ class DemoHandler(http.server.BaseHTTPRequestHandler):
                 "supports_streaming": caps.get("supports", {}).get("streaming", False),
                 "supports_tools": caps.get("supports", {}).get("tool_calls", False),
                 "supports_vision": caps.get("supports", {}).get("vision", False),
+                "model_picker_price_category": m.get("model_picker_price_category"),
+                "billing": m.get("billing"),
             })
         # Also collect models with no endpoints (listed but not callable)
         listed_only = []
@@ -448,12 +478,17 @@ class DemoHandler(http.server.BaseHTTPRequestHandler):
             picker = m.get("model_picker_enabled", False)
             policy = m.get("policy", {}).get("state", "")
             if picker or policy == "enabled":
-                listed_only.append({
+                listed_model = {
                     "id": m.get("id", ""),
                     "name": m.get("name", m.get("id", "")),
                     "vendor": m.get("vendor", ""),
                     "status": "listed but no endpoint",
-                })
+                }
+                if "model_picker_price_category" in m:
+                    listed_model["model_picker_price_category"] = m["model_picker_price_category"]
+                if "billing" in m:
+                    listed_model["billing"] = m["billing"]
+                listed_only.append(listed_model)
 
         token, api_base = get_mode_token_and_base(mode)
         self._json_response(200, {

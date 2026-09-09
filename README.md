@@ -276,7 +276,8 @@ curl http://localhost:8787/v1/messages \
 | `POST` | `/chat/completions` | OpenAI Chat Completions (alias) |
 | `POST` | `/v1/responses` | OpenAI Responses API (GPT-5.x) |
 | `GET` | `/health` | Health check with token/upstream/mode/request count |
-| `GET` | `/stats` | Token usage stats (requests, tokens, per-model breakdown) |
+| `GET` | `/stats` | In-memory token usage stats for the current gateway process |
+| `GET` | `/usage?days=30` | Durable UTC daily/model token and actual AI-credit totals |
 | `GET` | `/logs` | Recent gateway log lines (text, ?n=100 for line count) |
 
 ## Configuration
@@ -286,6 +287,7 @@ curl http://localhost:8787/v1/messages \
 | `GATEWAY_HOST` | `127.0.0.1` | Listen address |
 | `GATEWAY_PORT` | `8787` | Listen port |
 | `GATEWAY_UPSTREAM` | `https://api.githubcopilot.com` | Upstream API (auto-resolved to enterprise for enterprise plans) |
+| `COPILOT_MODELS_API_VERSION` | `2026-08-01` | Versioned Copilot model catalog used for live AI-credit pricing |
 | `GATEWAY_SESSION_ID` | (auto-generated) | Override the session ID for log directory naming |
 | `GITHUB_TOKEN` | (from `gh auth token`) | GitHub token override |
 
@@ -301,6 +303,7 @@ Each gateway launch creates its own log directory under a dated folder. Multiple
 
 ```
 logs/
+├── usage.sqlite3                        # durable request/model AI-credit ledger
 ├── latest -> 2026-04-09/143022_a3f1/    # symlink to newest session
 ├── 2026-04-09/
 │   ├── 143022_a3f1/                     # 1st launch
@@ -321,10 +324,13 @@ tail -f logs/latest/gateway.log          # live request log
 tail -f logs/latest/console.log          # full console output (cg launch only)
 ```
 
-**Cleanup:** logs are never auto-deleted. Remove old dated folders when needed:
+**Cleanup:** logs and usage history are never auto-deleted. Remove old request logs by deleting dated folders. The durable usage history is independent and remains in `logs/usage.sqlite3`; remove that database only when you intentionally want to erase the dashboard history.
 ```bash
-rm -rf logs/2026-04-01/                  # delete a specific day
+rm -rf logs/2026-04-01/                  # delete a specific day of request logs
+rm logs/usage.sqlite3                    # explicitly erase all durable usage history
 ```
+
+The usage ledger stores UTC timestamps, model IDs, endpoint/origin labels, token counts, and GitHub-provided AI-credit metadata. It does **not** store prompts, responses, credentials, usernames, or repository paths. Exact history begins after a gateway version with durable accounting is started; old text logs are not treated as authoritative billing records.
 
 **Note:** When using `python3 gateway.py` directly (not via `cg`), gateway logs are written to the session directory and also printed to the terminal. There is no `console.log` in this case — it's only created by the `cg` shell function's redirect.
 
@@ -358,7 +364,10 @@ The demo UI at `localhost:8788` provides:
 - **Mode toggle**: VS Code / CLI switch — shows different model lists, API URLs, token types
 - **Draggable split**: Resize panes by dragging the border
 - **Info bar**: Shows API URL, token type, integration ID, model count for current mode
-- **Gateway panel** (collapsible, top strip): per-host (Windows | WSL | Total) stats table — requests, tokens in/out, top model, last request — plus a live `/logs` tail with `[WIN]` (blue) / `[WSL]` (green) / `[OTHER]` (gray) prefixes. Polls the gateway every 3s via `/api/gateway/stats` + `/api/gateway/logs`.
+- **All model prices**: Live default and long-context GitHub AI-credit rates, grouped by model and sortable by price
+- **Usage dashboard**: Durable 7/30/90/365-day UTC summaries, exact-cost coverage, token categories, per-model totals, and sortable daily/model usage
+- **Theme control**: System, light, or dark; the choice is saved locally in the browser
+- **Gateway panel** (collapsible, top strip): per-host (Windows | WSL | Total) current-process stats plus a live `/logs` tail. Polls every 3s via `/api/gateway/stats` + `/api/gateway/logs`.
 
 The demo calls the Copilot API directly (not through the gateway) so it can switch modes per-request.
 

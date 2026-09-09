@@ -6,24 +6,37 @@
 <title>Copilot Gateway Demo</title>
 <style>
   :root {
+    color-scheme: dark;
     --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
-    --border: #30363d; --text: #e6edf3; --text2: #8b949e;
-    --accent: #58a6ff; --green: #3fb950; --orange: #d29922;
-    --red: #f85149; --purple: #bc8cff;
-    --win-color: #58a6ff; --wsl-color: #3fb950; --other-color: #8b949e;
+    --border: #3d444d; --text: #f0f6fc; --text2: #a7b0ba;
+    --accent: #79c0ff; --accent-strong: #1f6feb; --on-accent: #fff;
+    --green: #56d364; --orange: #e3b341; --red: #ff7b72; --purple: #d2a8ff;
+    --neutral-soft: rgba(167,176,186,0.14); --accent-soft: rgba(121,192,255,0.14); --green-soft: rgba(86,211,100,0.14); --purple-soft: rgba(210,168,255,0.14); --orange-soft: rgba(227,179,65,0.14); --red-soft: rgba(255,123,114,0.14);
+    --win-color: #79c0ff; --wsl-color: #56d364; --other-color: #a7b0ba;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #ffffff; --bg2: #f6f8fa; --bg3: #eaeef2;
+    --border: #afb8c1; --text: #1f2328; --text2: #59636e;
+    --accent: #0969da; --accent-strong: #0969da; --on-accent: #fff;
+    --green: #1a7f37; --orange: #9a6700; --red: #cf222e; --purple: #8250df;
+    --neutral-soft: rgba(89,99,110,0.12); --accent-soft: rgba(9,105,218,0.10); --green-soft: rgba(26,127,55,0.10); --purple-soft: rgba(130,80,223,0.12); --orange-soft: rgba(154,103,0,0.12); --red-soft: rgba(207,34,46,0.10);
+    --win-color: #0969da; --wsl-color: #1a7f37; --other-color: #59636e;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, 'SF Mono', Menlo, monospace; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; font-size: 13px; }
+  button, select, textarea { color-scheme: inherit; }
+  button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
   /* ── Header ── */
   .header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .header h1 { font-size: 15px; font-weight: 600; color: var(--accent); }
-  .header select { background: var(--bg3); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-family: inherit; font-size: 12px; min-width: 200px; }
-  .header .model-info { color: var(--text2); font-size: 11px; }
+  .header select { background: var(--bg3); color: var(--text); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; font-family: inherit; font-size: 12px; min-width: 200px; max-width: min(420px, 45vw); }
   .header .mode-toggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .header .mode-btn { background: var(--bg); color: var(--text2); border: none; padding: 5px 12px; font-family: inherit; font-size: 11px; cursor: pointer; font-weight: 600; transition: all 0.15s; }
   .header .mode-btn:not(:last-child) { border-right: 1px solid var(--border); }
-  .header .mode-btn.active { background: var(--accent); color: #fff; }
+  .header .mode-btn.active { background: var(--accent-strong); color: var(--on-accent); }
   .header .mode-btn:hover:not(.active) { background: var(--bg3); color: var(--text); }
   .header .status { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text2); }
   .header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
@@ -34,6 +47,146 @@
   .mode-info-bar .mib-label { color: var(--text2); font-weight: 600; text-transform: uppercase; font-size: 9px; letter-spacing: 0.5px; }
   .mode-info-bar .mib-url { color: var(--green); font-family: 'SF Mono', Menlo, monospace; padding: 2px 8px; background: rgba(63,185,80,0.1); border-radius: 3px; margin-right: 12px; }
   .mode-info-bar .mib-value { color: var(--text); margin-right: 12px; }
+
+  /* ── Selected model details and pricing ── */
+  .model-details { padding: 9px 20px 10px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; max-height: 260px; overflow-y: auto; }
+  .model-info { color: var(--text2); font-size: 11px; margin-bottom: 8px; }
+  .pricing-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 9px 12px; }
+  .pricing-header { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-bottom: 8px; }
+  .pricing-title { color: var(--text); font-size: 12px; font-weight: 600; }
+  .pricing-unit { color: var(--text2); font-size: 10px; }
+  .price-tier { padding: 2px 7px; border-radius: 999px; font-size: 9px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; }
+  .price-tier.low { background: var(--neutral-soft); color: var(--text2); }
+  .price-tier.medium { background: var(--purple-soft); color: var(--purple); }
+  .price-tier.high { background: var(--orange-soft); color: var(--orange); }
+  .price-tier.very-high { background: var(--orange-soft); color: var(--orange); border: 1px solid currentColor; }
+  .pricing-schedules { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 8px; }
+  .pricing-schedule { min-width: 0; padding: 8px 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 5px; }
+  .pricing-schedule-header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 7px; }
+  .pricing-schedule-name { color: var(--purple); font-size: 11px; font-weight: 700; }
+  .pricing-schedule-limit { color: var(--text2); font-size: 9px; }
+  .pricing-rates { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; }
+  .pricing-rate { min-width: 0; }
+  .pricing-rate-label { color: var(--text2); font-size: 9px; line-height: 1.25; margin-bottom: 2px; }
+  .pricing-rate-value { color: var(--text); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .pricing-rate-value.missing, .pricing-unavailable { color: var(--text2); font-weight: 400; }
+  .pricing-unavailable { font-size: 11px; padding: 2px 0; }
+  .catalog-button, .catalog-close, .catalog-direction, .usage-button, .usage-close, .usage-refresh { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-family: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .catalog-button:hover, .catalog-close:hover, .catalog-direction:hover, .usage-button:hover, .usage-close:hover, .usage-refresh:hover { border-color: var(--text2); background: var(--border); }
+  .catalog-button:disabled { opacity: 0.45; cursor: wait; }
+
+  /* ── Full model price catalog ── */
+  body.catalog-open { overflow: hidden; }
+  .price-catalog-modal { display: none; position: fixed; inset: 0; z-index: 1000; padding: 24px; background: rgba(1, 4, 9, 0.78); align-items: stretch; justify-content: center; }
+  .price-catalog-modal.open { display: flex; }
+  .price-catalog-dialog { width: min(1500px, 100%); min-height: 0; display: flex; flex-direction: column; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 60px rgba(0,0,0,0.55); overflow: hidden; }
+  .catalog-header { display: flex; align-items: flex-start; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .catalog-heading { min-width: 0; flex: 1; }
+  .catalog-heading h2 { color: var(--accent); font-size: 15px; margin-bottom: 4px; }
+  .catalog-subtitle { color: var(--text2); font-size: 10px; line-height: 1.45; }
+  .catalog-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 9px 16px; border-bottom: 1px solid var(--border); background: var(--bg3); }
+  .catalog-controls label { color: var(--text2); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+  .catalog-controls select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; font-family: inherit; font-size: 11px; }
+  .catalog-hint { margin-left: auto; color: var(--text2); font-size: 10px; }
+  .catalog-table-wrap { flex: 1; min-height: 0; overflow: auto; }
+  .catalog-table { width: 100%; min-width: 1180px; border-collapse: separate; border-spacing: 0; font-size: 11px; }
+  .catalog-table th { position: sticky; top: 0; z-index: 1; background: var(--bg3); color: var(--text2); text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid var(--border); }
+  .catalog-table th, .catalog-table td { padding: 7px 9px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .catalog-table th:last-child, .catalog-table td:last-child { border-right: none; }
+  .catalog-table tbody tr:hover { background: rgba(88,166,255,0.07); }
+  .catalog-table .model-cell { min-width: 230px; }
+  .catalog-model-name { color: var(--text); font-weight: 600; }
+  .catalog-model-id { color: var(--text2); font-size: 9px; margin-top: 2px; }
+  .catalog-number { text-align: right; font-variant-numeric: tabular-nums; }
+  .catalog-muted { color: var(--text2); }
+  .catalog-tier-stack { display: grid; gap: 3px; min-width: 86px; }
+  .catalog-tier-value { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; white-space: nowrap; }
+  .catalog-tier-label { color: var(--text2); font-size: 8px; font-weight: 600; text-transform: uppercase; }
+  .catalog-tier-number { color: var(--text); font-variant-numeric: tabular-nums; }
+  .catalog-tier-number.missing { color: var(--text2); }
+  .catalog-tier-value.active .catalog-tier-label, .catalog-tier-value.active .catalog-tier-number:not(.missing) { color: var(--accent); }
+  .catalog-sort { width: 100%; display: inline-flex; align-items: center; justify-content: space-between; gap: 5px; border: 0; background: none; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; }
+  .catalog-sort:hover { color: var(--text); }
+  .catalog-sort-indicator { min-width: 9px; color: var(--accent); }
+  .availability-badge { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 9px; white-space: nowrap; }
+  .availability-badge.callable { color: var(--green); background: rgba(63,185,80,0.12); }
+  .availability-badge.listed { color: var(--text2); background: rgba(139,148,158,0.12); }
+
+  /* ── Theme and durable usage dashboard ── */
+  .theme-control { display: flex; align-items: center; gap: 6px; color: var(--text2); font-size: 11px; white-space: nowrap; }
+  .theme-control select, .usage-controls select { min-width: 0; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  body.modal-open { overflow: hidden; }
+  .usage-modal { display: none; position: fixed; inset: 0; z-index: 1100; padding: 12px; background: rgba(1, 4, 9, 0.78); }
+  .usage-modal.open { display: block; }
+  .usage-dialog { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 60px rgba(0,0,0,0.45); }
+  .usage-header { display: flex; align-items: flex-start; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); }
+  .usage-heading { min-width: 0; flex: 1; }
+  .usage-heading h2 { color: var(--accent); font-size: 20px; line-height: 1.25; margin-bottom: 5px; }
+  .usage-subtitle, .usage-note { color: var(--text2); font-size: 12px; line-height: 1.5; }
+  .usage-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg3); }
+  .usage-range { display: inline-flex; border: 0; }
+  .usage-range legend { margin-right: 8px; color: var(--text2); font-size: 12px; font-weight: 600; line-height: 30px; float: left; }
+  .usage-range-buttons { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .usage-range button { border: 0; border-right: 1px solid var(--border); padding: 6px 10px; background: var(--bg); color: var(--text2); font: inherit; font-size: 12px; cursor: pointer; }
+  .usage-range button:last-child { border-right: 0; }
+  .usage-range button[aria-pressed="true"] { background: var(--accent-strong); color: var(--on-accent); font-weight: 700; }
+  .usage-filter { display: flex; align-items: center; gap: 7px; color: var(--text2); font-size: 12px; font-weight: 600; }
+  .usage-filter select { max-width: min(360px, 45vw); font-size: 12px; }
+  .usage-refresh:disabled { opacity: 0.55; cursor: wait; }
+  .usage-status { margin-left: auto; color: var(--text2); font-size: 12px; line-height: 1.4; }
+  .usage-status.error { color: var(--red); font-weight: 600; }
+  .usage-content { flex: 1; min-height: 0; overflow: auto; padding: 18px 20px 28px; }
+  .usage-cards { display: grid; grid-template-columns: repeat(7, minmax(145px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .usage-card { min-width: 0; padding: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
+  .usage-card-label { color: var(--text2); font-size: 12px; font-weight: 700; line-height: 1.3; margin-bottom: 6px; }
+  .usage-card-value { color: var(--text); font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .usage-card-detail { color: var(--text2); font-size: 11px; line-height: 1.4; margin-top: 5px; }
+  .usage-section { margin-top: 18px; }
+  .usage-section h3 { color: var(--text); font-size: 14px; margin-bottom: 4px; }
+  .usage-section-note { color: var(--text2); font-size: 12px; line-height: 1.45; margin-bottom: 8px; }
+  .usage-table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
+  .usage-table { width: 100%; min-width: 1050px; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+  .usage-table.compact { min-width: 980px; }
+  .usage-table th { position: sticky; top: 0; z-index: 1; background: var(--bg3); color: var(--text2); text-align: left; font-size: 11px; letter-spacing: 0.2px; }
+  .usage-table th, .usage-table td { padding: 8px 10px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .usage-table th:last-child, .usage-table td:last-child { border-right: 0; }
+  .usage-table tbody tr:last-child td { border-bottom: 0; }
+  .usage-table tbody tr:hover { background: var(--neutral-soft); }
+  .usage-table .number { text-align: right; font-variant-numeric: tabular-nums; }
+  .usage-table .unknown { color: var(--text2); }
+  .usage-sort { width: 100%; display: inline-flex; justify-content: space-between; gap: 6px; border: 0; background: none; color: inherit; font: inherit; font-weight: 700; cursor: pointer; text-align: left; }
+  .usage-sort:hover { color: var(--text); }
+  .usage-sort-indicator { min-width: 10px; color: var(--accent); }
+  .usage-volume-cell { min-width: 170px; }
+  .usage-volume-track { display: inline-block; width: 88px; height: 8px; margin-left: 8px; overflow: hidden; vertical-align: middle; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); }
+  .usage-volume-bar { display: block; height: 100%; min-width: 1px; background: var(--purple); }
+  .usage-empty { padding: 18px !important; text-align: center !important; color: var(--text2); }
+
+  @media (max-width: 1100px) {
+    .usage-cards { grid-template-columns: repeat(4, minmax(145px, 1fr)); }
+  }
+
+  @media (max-width: 760px) {
+    .header { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+    .header select { order: 3; width: 100%; max-width: none; }
+    .header .status { margin-left: auto; }
+    .theme-control { order: 2; }
+    .mode-info-bar, .model-details { padding-left: 12px; padding-right: 12px; }
+    .pricing-schedules { grid-template-columns: 1fr; }
+    .pricing-rates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .price-catalog-modal { padding: 0; }
+    .price-catalog-dialog { width: 100%; border: 0; border-radius: 0; }
+    .catalog-header, .catalog-controls { padding-left: 12px; padding-right: 12px; }
+    .catalog-hint { width: 100%; margin-left: 0; }
+    .usage-modal { padding: 0; }
+    .usage-dialog { border: 0; border-radius: 0; }
+    .usage-header { padding: 13px 12px; }
+    .usage-heading h2 { font-size: 17px; }
+    .usage-controls, .usage-content { padding-left: 12px; padding-right: 12px; }
+    .usage-status { width: 100%; margin-left: 0; }
+    .usage-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .usage-card-value { font-size: 18px; }
+  }
 
   /* ── Gateway Panel (per-host stats + color-coded log) ── */
   .gateway-panel { display: flex; flex-direction: column; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; max-height: 320px; }
@@ -93,7 +246,7 @@
   .chat-input { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg2); }
   .chat-input textarea { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; font-family: inherit; font-size: 13px; resize: none; min-height: 44px; max-height: 120px; outline: none; }
   .chat-input textarea:focus { border-color: var(--accent); }
-  .chat-input button { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 10px 20px; font-family: inherit; font-size: 13px; cursor: pointer; font-weight: 600; white-space: nowrap; }
+  .chat-input button { background: var(--accent-strong); color: var(--on-accent); border: none; border-radius: 8px; padding: 10px 20px; font-family: inherit; font-size: 13px; cursor: pointer; font-weight: 600; white-space: nowrap; }
   .chat-input button:hover { opacity: 0.9; }
   .chat-input button:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -110,11 +263,11 @@
   .flow-entry .fe-header:hover { background: var(--border); }
   .flow-entry .fe-time { color: var(--text2); font-variant-numeric: tabular-nums; }
   .flow-entry .fe-tag { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
-  .tag-req { background: #1f3a5f; color: var(--accent); }
-  .tag-res { background: #1a3a2a; color: var(--green); }
-  .tag-chunk { background: #2d2a1a; color: var(--orange); }
-  .tag-err { background: #3d1a1a; color: var(--red); }
-  .tag-info { background: #2a1f3a; color: var(--purple); }
+  .tag-req { background: var(--accent-soft); color: var(--accent); }
+  .tag-res { background: var(--green-soft); color: var(--green); }
+  .tag-chunk { background: var(--orange-soft); color: var(--orange); }
+  .tag-err { background: var(--red-soft); color: var(--red); }
+  .tag-info { background: var(--purple-soft); color: var(--purple); }
   .flow-entry .fe-text { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .flow-entry .fe-body { display: none; padding: 8px 10px; font-size: 11px; border-top: 1px solid var(--border); }
   .flow-entry .fe-body.open { display: block; }
@@ -136,8 +289,17 @@
     <button class="mode-btn active" data-mode="vscode" onclick="setMode('vscode')">VS Code</button>
     <button class="mode-btn" data-mode="cli" onclick="setMode('cli')">CLI</button>
   </div>
-  <select id="model-select"><option>Loading models...</option></select>
-  <span class="model-info" id="model-info"></span>
+  <select id="model-select" aria-label="Model"><option>Loading models...</option></select>
+  <button class="catalog-button" id="catalog-button" type="button" onclick="openPriceCatalog()" disabled>All model prices</button>
+  <button class="usage-button" id="usage-button" type="button" onclick="openUsageDashboard()">Usage</button>
+  <label class="theme-control" for="theme-select">
+    <span>Theme</span>
+    <select id="theme-select" onchange="setThemePreference(this.value)">
+      <option value="system">System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+  </label>
   <div class="status">
     <div class="dot" id="status-dot"></div>
     <span id="status-text">connecting...</span>
@@ -155,6 +317,14 @@
   <span class="mib-label">Models</span>
   <span class="mib-value" id="mib-count">-</span>
 </div>
+
+<!-- Selected Model Details -->
+<section class="model-details" aria-label="Selected model details">
+  <div class="model-info" id="model-info"></div>
+  <div class="pricing-panel" id="pricing-panel" aria-live="polite">
+    <div class="pricing-unavailable">Pricing unavailable for this mode/account</div>
+  </div>
+</section>
 
 <!-- Gateway Panel: per-host stats + color-coded live log -->
 <div class="gateway-panel" id="gateway-panel">
@@ -221,13 +391,165 @@
   </div>
 </div>
 
+<!-- Full model pricing catalog -->
+<div class="price-catalog-modal" id="price-catalog-modal" aria-hidden="true" onclick="handleCatalogBackdrop(event)">
+  <section class="price-catalog-dialog" role="dialog" aria-modal="true" aria-labelledby="catalog-title">
+    <header class="catalog-header">
+      <div class="catalog-heading">
+        <h2 id="catalog-title">All model prices</h2>
+        <div class="catalog-subtitle" id="catalog-subtitle">Loading the current mode’s model catalog…</div>
+      </div>
+      <button class="catalog-close" id="catalog-close" type="button" onclick="closePriceCatalog()" aria-label="Close model pricing catalog">Close</button>
+    </header>
+    <div class="catalog-controls">
+      <label for="catalog-tier-select">Price tier</label>
+      <select id="catalog-tier-select" onchange="setCatalogSortTier(this.value)">
+        <option value="default">Default</option>
+        <option value="long_context">Long context</option>
+      </select>
+      <label for="catalog-sort-select">Sort by</label>
+      <select id="catalog-sort-select" onchange="setCatalogSort(this.value, false)">
+        <option value="input_price">Input credits</option>
+        <option value="output_price">Output credits</option>
+        <option value="cache_read_price">Cache read credits</option>
+        <option value="cache_write_price">Cache write credits</option>
+        <option value="cache_write_1h_price">Cache write (1 hour)</option>
+        <option value="model">Model name</option>
+      </select>
+      <button class="catalog-direction" id="catalog-direction" type="button" onclick="toggleCatalogSortDirection()">Low → high</button>
+      <span class="catalog-hint">Click a price column heading to sort. Missing prices stay last.</span>
+    </div>
+    <div class="catalog-table-wrap">
+      <table class="catalog-table">
+        <thead>
+          <tr>
+            <th data-sort-key="model" aria-sort="none"><button class="catalog-sort" type="button" onclick="setCatalogSort('model', true)">Model <span class="catalog-sort-indicator"></span></button></th>
+            <th>Availability</th>
+            <th>Cost tier</th>
+            <th>Prompt tokens</th>
+            <th>Billing batch</th>
+            <th data-sort-key="input_price" aria-sort="none"><button class="catalog-sort" type="button" onclick="setCatalogSort('input_price', true)">Input <span class="catalog-sort-indicator"></span></button></th>
+            <th data-sort-key="cache_read_price" aria-sort="none"><button class="catalog-sort" type="button" onclick="setCatalogSort('cache_read_price', true)">Cache read <span class="catalog-sort-indicator"></span></button></th>
+            <th data-sort-key="cache_write_price" aria-sort="none"><button class="catalog-sort" type="button" onclick="setCatalogSort('cache_write_price', true)">Cache write <span class="catalog-sort-indicator"></span></button></th>
+            <th data-sort-key="cache_write_1h_price" aria-sort="none"><button class="catalog-sort" type="button" onclick="setCatalogSort('cache_write_1h_price', true)">Cache write (1h) <span class="catalog-sort-indicator"></span></button></th>
+            <th data-sort-key="output_price" aria-sort="none"><button class="catalog-sort" type="button" onclick="setCatalogSort('output_price', true)">Output <span class="catalog-sort-indicator"></span></button></th>
+          </tr>
+        </thead>
+        <tbody id="catalog-price-body"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<!-- Durable usage dashboard -->
+<div class="usage-modal" id="usage-modal" aria-hidden="true" onclick="handleUsageBackdrop(event)">
+  <section class="usage-dialog" role="dialog" aria-modal="true" aria-labelledby="usage-title" aria-describedby="usage-description">
+    <header class="usage-header">
+      <div class="usage-heading">
+        <h2 id="usage-title">Gateway usage</h2>
+        <p class="usage-subtitle" id="usage-description">Durable accounting totals. All dates are UTC.</p>
+        <p class="usage-note">Tracks requests sent through gateway port 8787; the mode-switching demo chat calls Copilot directly and is not included. Data begins when durable accounting is enabled. Credits are actual when GitHub provides usage metadata; requests without it are not shown as zero-cost.</p>
+        <p class="usage-note">USD equivalents use 1 AI credit = $0.01 USD, rounded to at most 6 decimal places. This is the value of credits consumed, not your final bill or additional charges after included allowances. Partial totals include only requests with reported cost.</p>
+      </div>
+      <button class="usage-close" id="usage-close" type="button" onclick="closeUsageDashboard()" aria-label="Close usage dashboard">Close</button>
+    </header>
+    <div class="usage-controls">
+      <fieldset class="usage-range">
+        <legend>Range</legend>
+        <span class="usage-range-buttons">
+          <button type="button" data-usage-days="7" aria-pressed="false" onclick="setUsageDays(7)">7 days</button>
+          <button type="button" data-usage-days="30" aria-pressed="true" onclick="setUsageDays(30)">30 days</button>
+          <button type="button" data-usage-days="90" aria-pressed="false" onclick="setUsageDays(90)">90 days</button>
+          <button type="button" data-usage-days="365" aria-pressed="false" onclick="setUsageDays(365)">365 days</button>
+        </span>
+      </fieldset>
+      <label class="usage-filter" for="usage-model-filter">Model
+        <select id="usage-model-filter" onchange="setUsageModelFilter(this.value)">
+          <option value="">All models</option>
+        </select>
+      </label>
+      <button class="usage-refresh" id="usage-refresh" type="button" onclick="loadUsage(true)">Refresh</button>
+      <div class="usage-status" id="usage-status" role="status" aria-live="polite">Open the dashboard to load usage.</div>
+    </div>
+    <div class="usage-content">
+      <div class="usage-cards" id="usage-cards" aria-label="Usage totals"></div>
+
+      <section class="usage-section" aria-labelledby="usage-daily-title">
+        <h3 id="usage-daily-title">Daily totals</h3>
+        <p class="usage-section-note">Daily request volume and token totals. Dates are UTC.</p>
+        <div class="usage-table-wrap">
+          <table class="usage-table compact">
+            <thead><tr>
+              <th scope="col">UTC date</th><th scope="col">Requests and volume</th>
+              <th scope="col" class="number">Input</th><th scope="col" class="number">Output</th>
+              <th scope="col" class="number">Cache read</th><th scope="col" class="number">Cache write</th>
+              <th scope="col" class="number">Cache write (1h)</th><th scope="col" class="number">AI credits</th>
+            </tr></thead>
+            <tbody id="usage-daily-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="usage-section" aria-labelledby="usage-model-totals-title">
+        <h3 id="usage-model-totals-title">Per-model totals</h3>
+        <p class="usage-section-note">Totals for the selected UTC range.</p>
+        <div class="usage-table-wrap">
+          <table class="usage-table compact">
+            <thead><tr>
+              <th scope="col">Model</th><th scope="col" class="number">Requests</th>
+              <th scope="col" class="number">Input</th><th scope="col" class="number">Output</th>
+              <th scope="col" class="number">Cache read</th><th scope="col" class="number">Cache write</th>
+              <th scope="col" class="number">Cache write (1h)</th><th scope="col" class="number">AI credits</th>
+            </tr></thead>
+            <tbody id="usage-model-totals-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="usage-section" aria-labelledby="usage-detail-title">
+        <h3 id="usage-detail-title">Daily usage by model</h3>
+        <p class="usage-section-note">Select a column heading to sort. Missing costs always stay last.</p>
+        <div class="usage-table-wrap">
+          <table class="usage-table" id="usage-detail-table">
+            <thead><tr>
+              <th scope="col" data-usage-sort="date" aria-sort="descending"><button class="usage-sort" type="button" onclick="setUsageSort('date')">UTC date <span class="usage-sort-indicator">▼</span></button></th>
+              <th scope="col" data-usage-sort="model" aria-sort="none"><button class="usage-sort" type="button" onclick="setUsageSort('model')">Model <span class="usage-sort-indicator"></span></button></th>
+              <th scope="col" data-usage-sort="requests" aria-sort="none"><button class="usage-sort" type="button" onclick="setUsageSort('requests')">Requests <span class="usage-sort-indicator"></span></button></th>
+              <th scope="col" data-usage-sort="input_tokens" aria-sort="none"><button class="usage-sort" type="button" onclick="setUsageSort('input_tokens')">Input <span class="usage-sort-indicator"></span></button></th>
+              <th scope="col" data-usage-sort="output_tokens" aria-sort="none"><button class="usage-sort" type="button" onclick="setUsageSort('output_tokens')">Output <span class="usage-sort-indicator"></span></button></th>
+              <th scope="col" data-usage-sort="cache_read_tokens" aria-sort="none"><button class="usage-sort" type="button" onclick="setUsageSort('cache_read_tokens')">Cache read <span class="usage-sort-indicator"></span></button></th>
+              <th scope="col" data-usage-sort="cache_write_tokens" aria-sort="none"><button class="usage-sort" type="button" onclick="setUsageSort('cache_write_tokens')">Cache write <span class="usage-sort-indicator"></span></button></th>
+              <th scope="col" data-usage-sort="cache_write_1h_tokens" aria-sort="none"><button class="usage-sort" type="button" onclick="setUsageSort('cache_write_1h_tokens')">Cache write (1h) <span class="usage-sort-indicator"></span></button></th>
+              <th scope="col" data-usage-sort="ai_credits" aria-sort="none"><button class="usage-sort" type="button" onclick="setUsageSort('ai_credits')">AI credits <span class="usage-sort-indicator"></span></button></th>
+            </tr></thead>
+            <tbody id="usage-detail-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </section>
+</div>
+
 <script>
 // ─── State ───────────────────────────────────────────────────────────────────
 let messages = [];
 let models = [];
+let listedOnlyModels = [];
 let sending = false;
 let eventSource = null;
 let currentMode = 'vscode';
+let catalogSortKey = 'input_price';
+let catalogSortTier = 'default';
+let catalogSortDirection = 'asc';
+let catalogPreviousFocus = null;
+let usageDays = 30;
+let usageData = null;
+let usageModelFilter = '';
+let usageSortKey = 'date';
+let usageSortDirection = 'desc';
+let usagePreviousFocus = null;
+let usagePollTimer = null;
+let usageLoadController = null;
 
 const $ = (id) => document.getElementById(id);
 const chatEl = $('chat-messages');
@@ -252,6 +574,7 @@ async function loadModels() {
     models = data.models || data;
     // Update mode info bar
     const listedOnly = data.listed_only || [];
+    listedOnlyModels = listedOnly;
     $('mib-url').textContent = data.api_base || '-';
     $('mib-token').textContent = `${data.token_type || '?'} (${data.token_prefix || '?'})`;
     $('mib-header').textContent = data.integration_id || '(none)';
@@ -273,7 +596,8 @@ async function loadModels() {
       for (const m of ms) {
         const opt = document.createElement('option');
         opt.value = m.id;
-        opt.textContent = `${m.id}`;
+        const tier = priceTierLabel(m.model_picker_price_category);
+        opt.textContent = tier ? `${m.id} · ${tier}` : `${m.id}`;
         group.appendChild(opt);
       }
       sel.appendChild(group);
@@ -283,26 +607,788 @@ async function loadModels() {
       sel.value = 'claude-sonnet-4.6';
     }
     sel.onchange = updateModelInfo;
+    $('catalog-button').disabled = models.length + listedOnlyModels.length === 0;
     updateModelInfo();
+    if ($('price-catalog-modal').classList.contains('open')) renderPriceCatalog();
   } catch (e) {
+    models = [];
+    listedOnlyModels = [];
     $('model-select').innerHTML = '<option>Error loading models</option>';
+    $('model-info').textContent = '';
+    $('catalog-button').disabled = true;
+    renderPricing(null);
+    if ($('price-catalog-modal').classList.contains('open')) renderPriceCatalog();
   }
+}
+
+const PRICE_TIER_LABELS = {
+  low: 'Low cost',
+  medium: 'Medium cost',
+  high: 'High cost',
+  very_high: 'Very high cost',
+};
+
+const PRICE_FIELDS = [
+  ['input_price', 'Input'],
+  ['output_price', 'Output'],
+  ['cache_read_price', 'Cache read'],
+  ['cache_write_price', 'Cache write'],
+  ['cache_write_1h_price', 'Cache write (1 hour)'],
+];
+
+function priceTierLabel(category) {
+  return Object.prototype.hasOwnProperty.call(PRICE_TIER_LABELS, category)
+    ? PRICE_TIER_LABELS[category]
+    : '';
+}
+
+function formatTokenCount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n >= 1_000_000 && n % 1_000_000 === 0) return `${n / 1_000_000}M`;
+  if (n >= 1_000 && n % 1_000 === 0) return `${n / 1_000}K`;
+  return n.toLocaleString('en-US');
+}
+
+function formatCreditValue(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (n !== 0 && Math.abs(n) < 0.000001) return n.toExponential(4);
+  return n.toLocaleString('en-US', { maximumSignificantDigits: 8 });
+}
+
+function hasPricingRates(schedule) {
+  return schedule && PRICE_FIELDS.some(([key]) => formatCreditValue(schedule[key]) !== null);
+}
+
+function appendTextElement(parent, tag, className, text) {
+  const el = document.createElement(tag);
+  el.className = className;
+  el.textContent = text;
+  parent.appendChild(el);
+  return el;
+}
+
+function buildPricingSchedule(name, schedule, defaultMaxPromptTokens, isLongContext) {
+  const card = document.createElement('section');
+  card.className = 'pricing-schedule';
+
+  const header = document.createElement('div');
+  header.className = 'pricing-schedule-header';
+  appendTextElement(header, 'span', 'pricing-schedule-name', name);
+
+  const maxPromptTokens = formatTokenCount(schedule?.max_prompt_tokens);
+  const defaultLimit = formatTokenCount(defaultMaxPromptTokens);
+  let limitText = maxPromptTokens ? `Maximum prompt tokens: ${maxPromptTokens}` : 'Prompt-token budget unavailable';
+  if (isLongContext && defaultLimit) {
+    limitText = `Above ${defaultLimit} prompt tokens · ${limitText}`;
+  }
+  appendTextElement(header, 'span', 'pricing-schedule-limit', limitText);
+  card.appendChild(header);
+
+  if (!hasPricingRates(schedule)) {
+    appendTextElement(card, 'div', 'pricing-unavailable', 'Pricing unavailable for this mode/account');
+    return card;
+  }
+
+  const rates = document.createElement('div');
+  rates.className = 'pricing-rates';
+  for (const [key, label] of PRICE_FIELDS) {
+    if (key === 'cache_write_1h_price' && (schedule[key] == null || schedule[key] === '')) continue;
+    const rate = document.createElement('div');
+    rate.className = 'pricing-rate';
+    appendTextElement(rate, 'div', 'pricing-rate-label', label);
+    const value = formatCreditValue(schedule[key]);
+    appendTextElement(rate, 'div', `pricing-rate-value${value === null ? ' missing' : ''}`, value ?? '—');
+    rates.appendChild(rate);
+  }
+  card.appendChild(rates);
+  return card;
+}
+
+function renderPricing(m) {
+  const panel = $('pricing-panel');
+  panel.replaceChildren();
+
+  const tokenPrices = m?.billing?.token_prices;
+  const defaultPrices = tokenPrices?.default;
+  const longContextPrices = tokenPrices?.long_context;
+  const hasAnyPricing = hasPricingRates(defaultPrices) || hasPricingRates(longContextPrices);
+
+  const header = document.createElement('div');
+  header.className = 'pricing-header';
+  const batchSize = formatTokenCount(tokenPrices?.batch_size);
+  appendTextElement(header, 'span', 'pricing-title', batchSize ? `Credits per ${batchSize} tokens` : 'Token pricing');
+  appendTextElement(header, 'span', 'pricing-unit', 'GitHub AI Credits');
+
+  const tierLabel = priceTierLabel(m?.model_picker_price_category);
+  if (tierLabel) {
+    appendTextElement(header, 'span', `price-tier ${m.model_picker_price_category.replace('_', '-')}`, `Relative tier · ${tierLabel}`);
+  }
+  panel.appendChild(header);
+
+  if (!hasAnyPricing || !batchSize) {
+    appendTextElement(panel, 'div', 'pricing-unavailable', 'Pricing unavailable for this mode/account');
+    return;
+  }
+
+  const schedules = document.createElement('div');
+  schedules.className = 'pricing-schedules';
+  schedules.appendChild(buildPricingSchedule('Default', defaultPrices, null, false));
+  if (longContextPrices) {
+    schedules.appendChild(buildPricingSchedule('Long context', longContextPrices, defaultPrices?.max_prompt_tokens, true));
+  }
+  panel.appendChild(schedules);
+}
+
+function catalogModels() {
+  const byId = new Map();
+  for (const model of listedOnlyModels) {
+    byId.set(model.id, { ...model, catalogAvailability: 'Listed only' });
+  }
+  for (const model of models) {
+    byId.set(model.id, { ...model, catalogAvailability: 'Callable' });
+  }
+  return [...byId.values()];
+}
+
+function catalogModelRows() {
+  return catalogModels().map((model) => {
+    const tokenPrices = model.billing?.token_prices;
+    const defaultPrices = tokenPrices?.default;
+    const longContextPrices = tokenPrices?.long_context;
+    const defaultMax = defaultPrices?.max_prompt_tokens;
+    const longMax = longContextPrices?.max_prompt_tokens;
+    let longPromptRange = '—';
+    if (longContextPrices && defaultMax && longMax) {
+      longPromptRange = `> ${formatTokenCount(defaultMax)} · max ${formatTokenCount(longMax)}`;
+    } else if (longContextPrices && defaultMax) {
+      longPromptRange = `> ${formatTokenCount(defaultMax)}`;
+    } else if (longMax) {
+      longPromptRange = `max ${formatTokenCount(longMax)}`;
+    }
+    return {
+      model,
+      batchSize: tokenPrices?.batch_size,
+      defaultPrices,
+      longContextPrices,
+      defaultPromptRange: defaultMax ? `≤ ${formatTokenCount(defaultMax)}` : '—',
+      longPromptRange,
+    };
+  });
+}
+
+function selectedCatalogPrices(item) {
+  return catalogSortTier === 'long_context' ? item.longContextPrices : item.defaultPrices;
+}
+
+function compareCatalogRows(a, b) {
+  let result = 0;
+  if (catalogSortKey === 'model') {
+    result = (a.model.name || a.model.id).localeCompare(b.model.name || b.model.id);
+  } else {
+    const aRaw = selectedCatalogPrices(a)?.[catalogSortKey];
+    const bRaw = selectedCatalogPrices(b)?.[catalogSortKey];
+    const aValue = Number(aRaw);
+    const bValue = Number(bRaw);
+    const aMissing = aRaw == null || aRaw === '' || !Number.isFinite(aValue);
+    const bMissing = bRaw == null || bRaw === '' || !Number.isFinite(bValue);
+    if (aMissing !== bMissing) return aMissing ? 1 : -1;
+    if (!aMissing) result = aValue - bValue;
+  }
+  if (result === 0) result = a.model.id.localeCompare(b.model.id);
+  return catalogSortDirection === 'desc' ? -result : result;
+}
+
+function appendCatalogCell(row, text, className = '') {
+  const cell = document.createElement('td');
+  cell.className = className;
+  cell.textContent = text;
+  row.appendChild(cell);
+  return cell;
+}
+
+function appendCatalogTieredCell(row, defaultValue, longValue, formatter, className = '') {
+  const cell = document.createElement('td');
+  cell.className = className;
+  const stack = document.createElement('div');
+  stack.className = 'catalog-tier-stack';
+  for (const [tier, label, rawValue] of [
+    ['default', 'Default', defaultValue],
+    ['long_context', 'Long', longValue],
+  ]) {
+    const value = formatter(rawValue);
+    const line = document.createElement('div');
+    line.className = `catalog-tier-value${catalogSortTier === tier ? ' active' : ''}`;
+    appendTextElement(line, 'span', 'catalog-tier-label', label);
+    appendTextElement(line, 'span', `catalog-tier-number${value === null ? ' missing' : ''}`, value ?? '—');
+    stack.appendChild(line);
+  }
+  cell.appendChild(stack);
+  row.appendChild(cell);
+  return cell;
+}
+
+function appendCatalogPriceCell(row, defaultValue, longValue) {
+  return appendCatalogTieredCell(row, defaultValue, longValue, formatCreditValue, 'catalog-number');
+}
+
+function updateCatalogSortControls() {
+  $('catalog-tier-select').value = catalogSortTier;
+  $('catalog-sort-select').value = catalogSortKey;
+  const isName = catalogSortKey === 'model';
+  $('catalog-direction').textContent = catalogSortDirection === 'asc'
+    ? (isName ? 'A → Z' : 'Low → high')
+    : (isName ? 'Z → A' : 'High → low');
+  for (const heading of document.querySelectorAll('.catalog-table th[data-sort-key]')) {
+    const active = heading.dataset.sortKey === catalogSortKey;
+    heading.setAttribute('aria-sort', active
+      ? (catalogSortDirection === 'asc' ? 'ascending' : 'descending')
+      : 'none');
+    const indicator = heading.querySelector('.catalog-sort-indicator');
+    if (indicator) indicator.textContent = active ? (catalogSortDirection === 'asc' ? '▲' : '▼') : '';
+  }
+}
+
+function renderPriceCatalog() {
+  const rows = catalogModelRows().sort(compareCatalogRows);
+  const callableCount = models.length;
+  const listedCount = listedOnlyModels.length;
+  $('catalog-subtitle').textContent =
+    `${currentMode === 'vscode' ? 'VS Code' : 'CLI'} mode · ${callableCount} callable` +
+    `${listedCount ? ` + ${listedCount} listed-only` : ''} · ${rows.length} models · GitHub AI Credits per billing batch`;
+
+  const body = $('catalog-price-body');
+  body.replaceChildren();
+  if (rows.length === 0) {
+    const row = document.createElement('tr');
+    const cell = appendCatalogCell(row, 'No models are available for this mode.', 'catalog-muted');
+    cell.colSpan = 10;
+    body.appendChild(row);
+    updateCatalogSortControls();
+    return;
+  }
+
+  for (const item of rows) {
+    const row = document.createElement('tr');
+    const modelCell = document.createElement('td');
+    modelCell.className = 'model-cell';
+    appendTextElement(modelCell, 'div', 'catalog-model-name', item.model.name || item.model.id);
+    if (item.model.name !== item.model.id) {
+      appendTextElement(modelCell, 'div', 'catalog-model-id', item.model.id);
+    }
+    row.appendChild(modelCell);
+
+    const availabilityCell = document.createElement('td');
+    appendTextElement(
+      availabilityCell,
+      'span',
+      `availability-badge ${item.model.catalogAvailability === 'Callable' ? 'callable' : 'listed'}`,
+      item.model.catalogAvailability,
+    );
+    row.appendChild(availabilityCell);
+
+    const tierCell = document.createElement('td');
+    const tierLabel = priceTierLabel(item.model.model_picker_price_category);
+    if (tierLabel) {
+      appendTextElement(
+        tierCell,
+        'span',
+        `price-tier ${item.model.model_picker_price_category.replace('_', '-')}`,
+        tierLabel,
+      );
+    } else {
+      tierCell.textContent = '—';
+      tierCell.className = 'catalog-muted';
+    }
+    row.appendChild(tierCell);
+
+    appendCatalogTieredCell(
+      row,
+      item.defaultPromptRange,
+      item.longPromptRange,
+      (value) => value === '—' ? null : value,
+      'catalog-muted',
+    );
+    appendCatalogCell(row, formatTokenCount(item.batchSize) || '—', item.batchSize ? 'catalog-number' : 'catalog-number catalog-muted');
+    appendCatalogPriceCell(row, item.defaultPrices?.input_price, item.longContextPrices?.input_price);
+    appendCatalogPriceCell(row, item.defaultPrices?.cache_read_price, item.longContextPrices?.cache_read_price);
+    appendCatalogPriceCell(row, item.defaultPrices?.cache_write_price, item.longContextPrices?.cache_write_price);
+    appendCatalogPriceCell(row, item.defaultPrices?.cache_write_1h_price, item.longContextPrices?.cache_write_1h_price);
+    appendCatalogPriceCell(row, item.defaultPrices?.output_price, item.longContextPrices?.output_price);
+    body.appendChild(row);
+  }
+  updateCatalogSortControls();
+}
+
+function setCatalogSortTier(tier) {
+  if (tier !== 'default' && tier !== 'long_context') return;
+  catalogSortTier = tier;
+  renderPriceCatalog();
+}
+
+function setCatalogSort(key, toggleIfCurrent) {
+  const validKeys = new Set(['model', 'input_price', 'output_price', 'cache_read_price', 'cache_write_price', 'cache_write_1h_price']);
+  if (!validKeys.has(key)) return;
+  if (toggleIfCurrent && catalogSortKey === key) {
+    catalogSortDirection = catalogSortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    catalogSortKey = key;
+    catalogSortDirection = 'asc';
+  }
+  renderPriceCatalog();
+}
+
+function toggleCatalogSortDirection() {
+  catalogSortDirection = catalogSortDirection === 'asc' ? 'desc' : 'asc';
+  renderPriceCatalog();
+}
+
+function updateModalBodyState() {
+  const hasOpenModal = document.querySelector('.price-catalog-modal.open, .usage-modal.open');
+  document.body.classList.toggle('modal-open', Boolean(hasOpenModal));
+}
+
+function openPriceCatalog() {
+  if (models.length + listedOnlyModels.length === 0) return;
+  catalogPreviousFocus = document.activeElement;
+  renderPriceCatalog();
+  $('price-catalog-modal').classList.add('open');
+  $('price-catalog-modal').setAttribute('aria-hidden', 'false');
+  document.body.classList.add('catalog-open');
+  updateModalBodyState();
+  $('catalog-close').focus();
+}
+
+function closePriceCatalog() {
+  $('price-catalog-modal').classList.remove('open');
+  $('price-catalog-modal').setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('catalog-open');
+  updateModalBodyState();
+  catalogPreviousFocus?.focus();
+  catalogPreviousFocus = null;
+}
+
+function handleCatalogBackdrop(event) {
+  if (event.target === event.currentTarget) closePriceCatalog();
+}
+
+document.addEventListener('keydown', (event) => {
+  const usageModal = $('usage-modal');
+  const catalogModal = $('price-catalog-modal');
+  const modal = usageModal.classList.contains('open')
+    ? usageModal
+    : (catalogModal.classList.contains('open') ? catalogModal : null);
+  if (!modal) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    modal === usageModal ? closeUsageDashboard() : closePriceCatalog();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+
+  const focusable = [...modal.querySelectorAll(
+    'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+  )].filter((element) => element.getClientRects().length > 0);
+  if (focusable.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) {
+    event.preventDefault();
+    first.focus();
+  }
+});
+
+// ─── Theme ───────────────────────────────────────────────────────────────────
+const THEME_STORAGE_KEY = 'copilot-gateway-theme';
+const themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+let themePreference = 'system';
+
+function applyThemePreference() {
+  const resolved = themePreference === 'system'
+    ? (themeMedia.matches ? 'dark' : 'light')
+    : themePreference;
+  document.documentElement.dataset.theme = resolved;
+  $('theme-select').value = themePreference;
+}
+
+function setThemePreference(preference) {
+  if (!['system', 'light', 'dark'].includes(preference)) return;
+  themePreference = preference;
+  try { localStorage.setItem(THEME_STORAGE_KEY, preference); } catch {}
+  applyThemePreference();
+}
+
+function initializeTheme() {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (['system', 'light', 'dark'].includes(stored)) themePreference = stored;
+  } catch {}
+  applyThemePreference();
+  const handleSystemThemeChange = () => {
+    if (themePreference === 'system') applyThemePreference();
+  };
+  if (themeMedia.addEventListener) themeMedia.addEventListener('change', handleSystemThemeChange);
+  else themeMedia.addListener(handleSystemThemeChange);
+}
+
+// ─── Durable usage dashboard ─────────────────────────────────────────────────
+const USAGE_POLL_MS = 30_000;
+const USAGE_TOKEN_COLUMNS = [
+  ['input_tokens', 'Input'],
+  ['output_tokens', 'Output'],
+  ['cache_read_tokens', 'Cache read'],
+  ['cache_write_tokens', 'Cache write'],
+  ['cache_write_1h_tokens', 'Cache write (1h)'],
+];
+const USAGE_SORT_KEYS = new Set(['date', 'model', 'requests', ...USAGE_TOKEN_COLUMNS.map(([key]) => key), 'ai_credits']);
+
+function usageNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatUsageInteger(value) {
+  const number = usageNumber(value);
+  return number === null ? '—' : Math.round(number).toLocaleString('en-US');
+}
+
+function usageCreditNumber(row) {
+  const credits = usageNumber(row?.ai_credits);
+  if (credits === null) return null;
+  const requests = usageNumber(row?.requests) || 0;
+  const withActual = usageNumber(row?.requests_with_actual_cost) || 0;
+  if (requests > 0 && withActual === 0) return null;
+  return credits;
+}
+
+// GitHub's published conversion; this is consumption value, not net billing.
+// https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing
+const USD_PER_AI_CREDIT = 0.01;
+const USAGE_USD_FORMAT = new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD',
+  minimumFractionDigits: 2, maximumFractionDigits: 6,
+});
+
+function formatUsageCredits(row) {
+  const credits = usageCreditNumber(row);
+  if (credits === null) return '—';
+  // Convert the raw credit total, not the rounded display string.
+  const dollars = credits * USD_PER_AI_CREDIT;
+  const usd = dollars > 0 && dollars < 0.000001
+    ? '<$0.000001' : USAGE_USD_FORMAT.format(dollars);
+  const formatted = `${formatCreditValue(credits)} (${usd} USD)`;
+  return (usageNumber(row?.requests_without_actual_cost) || 0) > 0
+    ? `${formatted} (partial actual)`
+    : formatted;
+}
+
+function appendUsageCell(row, text, className = '') {
+  const cell = document.createElement('td');
+  cell.className = className;
+  cell.textContent = text;
+  row.appendChild(cell);
+  return cell;
+}
+
+function appendUsageEmpty(body, columnCount, text) {
+  const row = document.createElement('tr');
+  const cell = appendUsageCell(row, text, 'usage-empty');
+  cell.colSpan = columnCount;
+  body.appendChild(row);
+}
+
+function addUsageCard(label, value, detail) {
+  const card = document.createElement('section');
+  card.className = 'usage-card';
+  appendTextElement(card, 'div', 'usage-card-label', label);
+  appendTextElement(card, 'div', 'usage-card-value', value);
+  appendTextElement(card, 'div', 'usage-card-detail', detail);
+  $('usage-cards').appendChild(card);
+}
+
+function renderUsageCards() {
+  const cards = $('usage-cards');
+  cards.replaceChildren();
+  if (!usageData) {
+    for (const label of ['AI credits', 'Requests', 'Input tokens', 'Output tokens', 'Cache read', 'Cache write', 'Exact-cost coverage']) {
+      addUsageCard(label, '—', 'Waiting for usage data');
+    }
+    return;
+  }
+
+  const totals = usageData.totals || {};
+  const requests = usageNumber(totals.requests) || 0;
+  const withActual = usageNumber(totals.requests_with_actual_cost) || 0;
+  const withoutActual = usageNumber(totals.requests_without_actual_cost) || 0;
+  const costCount = withActual + withoutActual;
+  const coverage = costCount > 0 ? `${((withActual / costCount) * 100).toFixed(1)}%` : '—';
+  const totalCredits = usageCreditNumber(totals);
+  const creditDetail = totalCredits === null
+    ? 'Not reported by GitHub for these requests'
+    : (withoutActual > 0
+      ? `Actual for ${formatUsageInteger(withActual)} of ${formatUsageInteger(costCount)} requests`
+      : (requests > 0 ? 'Actual usage metadata' : 'No recorded requests'));
+
+  addUsageCard('AI credits', formatUsageCredits(totals), creditDetail);
+  addUsageCard('Requests', formatUsageInteger(requests), `${formatUsageInteger(totals.succeeded)} succeeded · ${formatUsageInteger(totals.failed)} failed`);
+  addUsageCard('Input tokens', formatUsageInteger(totals.input_tokens), 'Prompt tokens');
+  addUsageCard('Output tokens', formatUsageInteger(totals.output_tokens), 'Generated tokens');
+  addUsageCard('Cache read', formatUsageInteger(totals.cache_read_tokens), 'Cached input tokens read');
+  addUsageCard('Cache write', formatUsageInteger(totals.cache_write_tokens), `${formatUsageInteger(totals.cache_write_1h_tokens)} written to 1-hour cache`);
+  addUsageCard('Exact-cost coverage', coverage, costCount > 0
+    ? `${formatUsageInteger(withActual)} exact · ${formatUsageInteger(withoutActual)} without cost metadata`
+    : (requests > 0 ? 'Cost coverage unavailable' : 'No recorded requests'));
+}
+
+function renderUsageDailyTotals() {
+  const body = $('usage-daily-body');
+  body.replaceChildren();
+  const rows = Array.isArray(usageData?.daily) ? [...usageData.daily] : [];
+  rows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  if (rows.length === 0) {
+    appendUsageEmpty(body, 8, 'No daily usage is recorded for this range.');
+    return;
+  }
+  const maxRequests = Math.max(1, ...rows.map((row) => usageNumber(row.requests) || 0));
+  for (const item of rows) {
+    const row = document.createElement('tr');
+    appendUsageCell(row, item.date || '—');
+    const requestCell = appendUsageCell(row, formatUsageInteger(item.requests), 'usage-volume-cell number');
+    const track = document.createElement('span');
+    track.className = 'usage-volume-track';
+    track.setAttribute('aria-hidden', 'true');
+    const bar = document.createElement('span');
+    bar.className = 'usage-volume-bar';
+    bar.style.width = `${Math.max(0, ((usageNumber(item.requests) || 0) / maxRequests) * 100)}%`;
+    track.appendChild(bar);
+    requestCell.appendChild(track);
+    for (const [key] of USAGE_TOKEN_COLUMNS) appendUsageCell(row, formatUsageInteger(item[key]), 'number');
+    const credits = formatUsageCredits(item);
+    appendUsageCell(row, credits, `number${credits === '—' ? ' unknown' : ''}`);
+    body.appendChild(row);
+  }
+}
+
+function renderUsageModelTotals() {
+  const body = $('usage-model-totals-body');
+  body.replaceChildren();
+  const rows = Array.isArray(usageData?.by_model) ? [...usageData.by_model] : [];
+  rows.sort((a, b) => (usageNumber(b.requests) || 0) - (usageNumber(a.requests) || 0) || String(a.model || '').localeCompare(String(b.model || '')));
+  if (rows.length === 0) {
+    appendUsageEmpty(body, 8, 'No per-model usage is recorded for this range.');
+    return;
+  }
+  for (const item of rows) {
+    const row = document.createElement('tr');
+    appendUsageCell(row, item.model || 'Unknown model');
+    appendUsageCell(row, formatUsageInteger(item.requests), 'number');
+    for (const [key] of USAGE_TOKEN_COLUMNS) appendUsageCell(row, formatUsageInteger(item[key]), 'number');
+    const credits = formatUsageCredits(item);
+    appendUsageCell(row, credits, `number${credits === '—' ? ' unknown' : ''}`);
+    body.appendChild(row);
+  }
+}
+
+function refreshUsageModelFilter() {
+  const select = $('usage-model-filter');
+  const availableModels = [...new Set(
+    (Array.isArray(usageData?.daily_models) ? usageData.daily_models : [])
+      .map((row) => row.model)
+      .filter((model) => typeof model === 'string' && model),
+  )].sort((a, b) => a.localeCompare(b));
+  if (usageModelFilter && !availableModels.includes(usageModelFilter)) usageModelFilter = '';
+  select.replaceChildren();
+  const allOption = document.createElement('option');
+  allOption.value = '';
+  allOption.textContent = 'All models';
+  select.appendChild(allOption);
+  for (const model of availableModels) {
+    const option = document.createElement('option');
+    option.value = model;
+    option.textContent = model;
+    select.appendChild(option);
+  }
+  select.value = usageModelFilter;
+}
+
+function compareUsageDetailRows(a, b) {
+  if (usageSortKey === 'ai_credits') {
+    const aValue = usageCreditNumber(a);
+    const bValue = usageCreditNumber(b);
+    if ((aValue === null) !== (bValue === null)) return aValue === null ? 1 : -1;
+    if (aValue !== null && aValue !== bValue) return usageSortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+  } else if (usageSortKey === 'date' || usageSortKey === 'model') {
+    const result = String(a[usageSortKey] || '').localeCompare(String(b[usageSortKey] || ''));
+    if (result !== 0) return usageSortDirection === 'asc' ? result : -result;
+  } else {
+    const aValue = usageNumber(a[usageSortKey]) || 0;
+    const bValue = usageNumber(b[usageSortKey]) || 0;
+    if (aValue !== bValue) return usageSortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+  }
+  return String(a.date || '').localeCompare(String(b.date || '')) || String(a.model || '').localeCompare(String(b.model || ''));
+}
+
+function updateUsageSortHeadings() {
+  for (const heading of document.querySelectorAll('#usage-detail-table th[data-usage-sort]')) {
+    const active = heading.dataset.usageSort === usageSortKey;
+    heading.setAttribute('aria-sort', active ? (usageSortDirection === 'asc' ? 'ascending' : 'descending') : 'none');
+    const indicator = heading.querySelector('.usage-sort-indicator');
+    if (indicator) indicator.textContent = active ? (usageSortDirection === 'asc' ? '▲' : '▼') : '';
+  }
+}
+
+function renderUsageDetail() {
+  const body = $('usage-detail-body');
+  body.replaceChildren();
+  const rows = (Array.isArray(usageData?.daily_models) ? usageData.daily_models : [])
+    .filter((row) => !usageModelFilter || row.model === usageModelFilter)
+    .sort(compareUsageDetailRows);
+  if (rows.length === 0) {
+    appendUsageEmpty(body, 9, usageModelFilter ? 'No usage is recorded for this model and range.' : 'No daily model usage is recorded for this range.');
+    updateUsageSortHeadings();
+    return;
+  }
+  for (const item of rows) {
+    const row = document.createElement('tr');
+    appendUsageCell(row, item.date || '—');
+    appendUsageCell(row, item.model || 'Unknown model');
+    appendUsageCell(row, formatUsageInteger(item.requests), 'number');
+    for (const [key] of USAGE_TOKEN_COLUMNS) appendUsageCell(row, formatUsageInteger(item[key]), 'number');
+    const credits = formatUsageCredits(item);
+    appendUsageCell(row, credits, `number${credits === '—' ? ' unknown' : ''}`);
+    body.appendChild(row);
+  }
+  updateUsageSortHeadings();
+}
+
+function renderUsageDashboard() {
+  renderUsageCards();
+  renderUsageDailyTotals();
+  renderUsageModelTotals();
+  refreshUsageModelFilter();
+  renderUsageDetail();
+}
+
+function setUsageDays(days) {
+  if (![7, 30, 90, 365].includes(days) || usageDays === days) return;
+  usageDays = days;
+  for (const button of document.querySelectorAll('[data-usage-days]')) {
+    button.setAttribute('aria-pressed', String(Number(button.dataset.usageDays) === usageDays));
+  }
+  loadUsage(true);
+}
+
+function setUsageModelFilter(model) {
+  usageModelFilter = model;
+  renderUsageDetail();
+}
+
+function setUsageSort(key) {
+  if (!USAGE_SORT_KEYS.has(key)) return;
+  if (usageSortKey === key) {
+    usageSortDirection = usageSortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    usageSortKey = key;
+    usageSortDirection = key === 'model' ? 'asc' : 'desc';
+  }
+  renderUsageDetail();
+}
+
+function formatUsageGenerated(value) {
+  if (typeof value !== 'string' || !value) return 'Generated time unavailable';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return `Generated ${value} UTC`;
+  return `Generated ${date.toLocaleString('en-US', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'medium' })} UTC`;
+}
+
+async function loadUsage(manual = false) {
+  if (!$('usage-modal').classList.contains('open')) return;
+  usageLoadController?.abort();
+  const controller = new AbortController();
+  usageLoadController = controller;
+  $('usage-refresh').disabled = true;
+  $('usage-status').classList.remove('error');
+  $('usage-status').textContent = manual ? 'Refreshing usage…' : 'Loading usage…';
+  try {
+    const response = await fetch(`/api/gateway/usage?days=${usageDays}`, { signal: controller.signal });
+    if (!response.ok) throw new Error(`Usage request failed (${response.status})`);
+    const data = await response.json();
+    if (!data || typeof data !== 'object') throw new Error('Usage response was not an object');
+    usageData = data;
+    renderUsageDashboard();
+    const range = data.range || {};
+    const rangeText = range.from && range.to ? ` · ${range.from}–${range.to} UTC` : '';
+    $('usage-status').textContent = `${formatUsageGenerated(data.generated_at)}${rangeText}`;
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    $('usage-status').textContent = `Could not load usage: ${error.message}`;
+    $('usage-status').classList.add('error');
+    if (!usageData) renderUsageDashboard();
+  } finally {
+    if (usageLoadController === controller) {
+      usageLoadController = null;
+      $('usage-refresh').disabled = false;
+    }
+  }
+}
+
+function openUsageDashboard() {
+  usagePreviousFocus = document.activeElement;
+  renderUsageDashboard();
+  $('usage-modal').classList.add('open');
+  $('usage-modal').setAttribute('aria-hidden', 'false');
+  updateModalBodyState();
+  $('usage-close').focus();
+  loadUsage(false);
+  clearInterval(usagePollTimer);
+  usagePollTimer = setInterval(() => loadUsage(false), USAGE_POLL_MS);
+}
+
+function closeUsageDashboard() {
+  $('usage-modal').classList.remove('open');
+  $('usage-modal').setAttribute('aria-hidden', 'true');
+  clearInterval(usagePollTimer);
+  usagePollTimer = null;
+  usageLoadController?.abort();
+  usageLoadController = null;
+  $('usage-refresh').disabled = false;
+  updateModalBodyState();
+  usagePreviousFocus?.focus();
+  usagePreviousFocus = null;
+}
+
+function handleUsageBackdrop(event) {
+  if (event.target === event.currentTarget) closeUsageDashboard();
 }
 
 function updateModelInfo() {
   const id = $('model-select').value;
   const m = models.find(x => x.id === id);
-  if (m) {
-    const ctx = m.context_window ? `${(m.context_window/1000).toFixed(0)}K ctx` : '';
-    const out = m.max_output ? `${(m.max_output/1000).toFixed(0)}K out` : '';
-    const feats = [
-      m.supports_streaming && 'stream',
-      m.supports_tools && 'tools',
-      m.supports_vision && 'vision',
-    ].filter(Boolean).join(', ');
-    const eps = (m.endpoints || []).join(', ');
-    $('model-info').textContent = `${models.length} models | ${ctx} / ${out} | ${feats} | ${eps}`;
+  if (!m) {
+    $('model-info').textContent = '';
+    renderPricing(null);
+    return;
   }
+
+  const ctx = m.context_window ? `${(m.context_window/1000).toFixed(0)}K ctx` : '';
+  const out = m.max_output ? `${(m.max_output/1000).toFixed(0)}K out` : '';
+  const feats = [
+    m.supports_streaming && 'stream',
+    m.supports_tools && 'tools',
+    m.supports_vision && 'vision',
+  ].filter(Boolean).join(', ');
+  const eps = (m.endpoints || []).join(', ');
+  $('model-info').textContent = `${models.length} models | ${ctx} / ${out} | ${feats} | ${eps}`;
+  renderPricing(m);
 }
 
 // ─── SSE Event Stream ────────────────────────────────────────────────────────
@@ -732,6 +1818,8 @@ async function startGatewayPoller() {
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────
+initializeTheme();
+renderUsageDashboard();
 loadModels();
 connectEvents();
 startGatewayPoller();
