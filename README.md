@@ -361,15 +361,32 @@ The ⚡️CG menu bar shows:
 The demo UI at `localhost:8788` provides:
 - **Left pane**: Chat with any model, model selector grouped by vendor
 - **Right pane**: Real-time call flow log (request bodies, response headers, SSE chunks, timing)
-- **Mode toggle**: VS Code / CLI switch — shows different model lists, API URLs, token types
+- **Mode toggle**: VS Code / CLI switch — shows different model lists, API URLs, integration IDs
 - **Draggable split**: Resize panes by dragging the border
-- **Info bar**: Shows API URL, token type, integration ID, model count for current mode
+- **Info bar**: Shows API URL, verified account, credential source, integration ID, model count for current mode
+- **Account button**: Shows the verified account for the current mode and explains why models are missing (signed out, access denied, no callable models). See [Demo accounts](#demo-accounts).
 - **All model prices**: Live default and long-context GitHub AI-credit rates, grouped by model and sortable by price
 - **Usage dashboard**: Durable 7/30/90/365-day UTC summaries, exact-cost coverage, token categories, per-model totals, and sortable daily/model usage
 - **Theme control**: System, light, or dark; the choice is saved locally in the browser
 - **Gateway panel** (collapsible, top strip): per-host (Windows | WSL | Total) current-process stats plus a live `/logs` tail. Polls every 3s via `/api/gateway/stats` + `/api/gateway/logs`.
 
 The demo calls the Copilot API directly (not through the gateway) so it can switch modes per-request.
+
+### Demo accounts
+
+Account changes in the demo apply **only to the demo, per mode (VS Code or CLI), for every open tab**. They never change the gateway's account, `.gateway-token.json`, or your active `gh` login.
+
+- **Default sources** (unchanged): CLI mode uses `GH_TOKEN`, else the active `gh` account; VS Code mode reads the legacy `.gateway-token.json` if it holds a VS Code token. The UI labels the credential source separately from the integration mode. The CLI default is pinned to github.com (`gh auth token --hostname github.com`); if `GH_HOST` names another host, the demo reports it as unsupported and sends that credential nowhere.
+- **Copilot API endpoints**: the demo only sends credentials to the exact GitHub.com plan endpoints returned by discovery — `api.githubcopilot.com`, `api.individual.githubcopilot.com`, `api.business.githubcopilot.com` and `api.enterprise.githubcopilot.com` (see GitHub's [Copilot allowlist reference](https://docs.github.com/en/copilot/reference/copilot-allowlist-reference)). Any other returned endpoint is refused.
+- **Use an existing gh account**: runs `gh auth token --hostname github.com --user <login>` for the demo only (the token is not copied to disk; only host/login/user ID are saved). The returned identity must match the chosen account.
+- **Sign in with GitHub.com**: device sign-in using the code and `https://github.com/login/device` link GitHub returns, with `read:user` scope, for personal and Enterprise Managed User accounts. Managed users enter their managed username (e.g. `name_shortcode`) on GitHub's sign-in page and continue with their identity provider; SAML SSO organizations may also require an active SSO session. The demo shows the verified identity and model access, and asks you to confirm before switching. This reuses the public VS Code OAuth client ID as an **experimental** integration; whether a given enterprise policy, token scope and Copilot entitlement accept it is not guaranteed.
+- **GHE.com (`*.ghe.com`) and GitHub Enterprise Server are not supported** by the demo; they are listed as unavailable and never receive github.com requests. See GitHub's [GHE.com Copilot setup guide](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/configure-personal-settings/authenticate-to-ghecom).
+- **Sign out of demo** stores a per-mode "disconnected" marker so a restart does not silently fall back to the legacy/default credential. **Use default source** removes it. Neither revokes provider tokens.
+- **Storage**: selections live in `.demo-auth.json` (gitignored; override with `--auth-store`). Device-sign-in tokens are encrypted with user-scoped Windows DPAPI; on macOS/Linux the file is owner-only (`0600`) — access control, not encryption. Token expiry is honored; there is no refresh-token support, so sign in again when a token expires.
+- **Security boundary**: account, model, chat, event and gateway-proxy APIs answer only to loopback clients using `127.0.0.1`/`localhost` on the demo's port, with same-origin `Origin`, an HttpOnly SameSite=Strict session cookie, and a CSRF header. The demo sends no CORS headers. With `--host 0.0.0.0` the page loads remotely but these APIs stay loopback-only; the gateway's own LAN/WSL behavior is unchanged.
+- **Isolated runs**: `--no-start-gateway`, `--auth-store`, `--legacy-token-file` and `--log-dir` keep a test instance from starting the real gateway or touching real state.
+
+Tests: `python -B -m unittest discover -s tests -p "test_demo_*.py"` and `node --test tests/test_demo_account_ui.cjs tests/test_usage_currency.cjs` (fake credentials and a local fake provider only). `tests/demo_fixture.py --state-dir <dir>` starts a browser-driveable demo against that fake provider.
 
 ## Windows
 
@@ -393,9 +410,10 @@ python tray_app.py
 ```
 
 Menu items: Stats (per-origin breakdown from the `per_origin` field of
-`/stats`), View logs (color-coded by origin from `/logs`), Copy claude /
-codex command, Enable for Windows + [Test], Enable for WSL submenu (one
-entry per distro) + per-distro [Test], Stop & quit.
+`/stats`), Open Demo UI (opens `http://127.0.0.1:8788/` in the default
+browser), View logs (color-coded by origin from `/logs`), Copy claude / codex
+command, Enable for Windows + [Test], Enable for WSL submenu (one entry per
+distro) + per-distro [Test], Stop & quit.
 
 ### After pulling updates on Windows
 
@@ -481,7 +499,8 @@ directories (`.venv\`, `build\`, `dist\`) are gitignored.
 |------|---------|
 | `gateway.py` | LLM gateway — dual mode, auto-auth, streaming, auto-launches demo + menu bar |
 | `demo.py` | Demo web app with call-flow instrumentation |
-| `demo.html` | Split-pane UI (chat + flow log + mode toggle) |
+| `demo_auth.py` | Demo-only per-mode account selection, device sign-in and protected storage |
+| `demo.html` | Split-pane UI (chat + flow log + mode toggle + account dialog) |
 | `menubar.swift` | macOS menu bar indicator source (compile: `swiftc menubar.swift -o menubar -framework Cocoa`) |
 | `tray_app.py` | Windows system-tray UI: stats / logs / Win + WSL toggles. Install: `pip install pystray pillow` |
 | `mini-cli.py` | Lightweight terminal CLI (~100 lines) |
@@ -499,6 +518,8 @@ directories (`.venv\`, `build\`, `dist\`) are gitignored.
 3. **Integration ID**: `Copilot-Integration-Id: copilot-developer-cli` or `vscode-chat` — this header controls which models are accessible
 4. **Auto-refresh**: On 401, gateway re-resolves the token
 5. **Persistence**: VS Code token saved to `.gateway-token.json`, auto-loaded on restart
+
+These steps describe the gateway. The demo UI's account controls are separate and never change them; see [Demo accounts](#demo-accounts).
 
 ## Caveats
 

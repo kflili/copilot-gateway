@@ -2,6 +2,8 @@ logs/
 __pycache__/
 *.pyc
 .gateway-token.json
+.demo-auth.json
+.demo-auth-*.tmp
 menubar
 CopilotGateway.app/
 

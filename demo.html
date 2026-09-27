@@ -26,7 +26,7 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, 'SF Mono', Menlo, monospace; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; font-size: 13px; }
   button, select, textarea { color-scheme: inherit; }
-  button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visible, [tabindex="-1"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
   /* ── Header ── */
@@ -188,6 +188,85 @@
     .usage-card-value { font-size: 18px; }
   }
 
+  /* ── Demo account (per mode, demo-only) ── */
+  .account-button { display: inline-flex; align-items: center; gap: 8px; max-width: 260px; min-width: 0; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px 5px 10px; font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .account-button:hover { border-color: var(--text2); background: var(--border); }
+  .account-button-text { overflow: hidden; text-overflow: ellipsis; }
+  .account-dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--text2); box-shadow: 0 0 0 3px var(--neutral-soft); }
+  .account-dot.ready { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+  .account-dot.signed_out { background: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
+  .account-dot.error { background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+  .account-dot.loading { animation: account-pulse 1.1s ease-in-out infinite; }
+  @keyframes account-pulse { 50% { opacity: 0.3; } }
+  .auth-banner { display: flex; align-items: center; gap: 12px; padding: 8px 20px; background: var(--orange-soft); border-bottom: 1px solid var(--border); border-left: 3px solid var(--orange); font-size: 12px; flex-shrink: 0; }
+  .auth-banner[hidden] { display: none; }
+  .auth-banner.error { background: var(--red-soft); border-left-color: var(--red); }
+  .auth-banner-text { flex: 1; min-width: 0; line-height: 1.45; overflow-wrap: anywhere; }
+  .account-btn { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 11px; font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .account-btn:hover { border-color: var(--text2); background: var(--border); }
+  .account-btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); font-weight: 700; }
+  .account-btn.primary:hover { opacity: 0.9; }
+  .account-btn.danger { color: var(--red); }
+  .account-btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+  .account-modal { display: none; position: fixed; inset: 0; z-index: 1200; padding: 24px; overflow-y: auto; background: rgba(1, 4, 9, 0.78); justify-content: center; align-items: flex-start; }
+  .account-modal.open { display: flex; }
+  .account-dialog { width: min(720px, 100%); margin: auto 0; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 60px rgba(0,0,0,0.5); }
+  .account-header { display: flex; align-items: flex-start; gap: 16px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border); }
+  .account-heading { flex: 1; min-width: 0; }
+  .account-heading h2 { color: var(--accent); font-size: 16px; margin-bottom: 5px; }
+  .account-note { color: var(--text2); font-size: 11px; line-height: 1.55; }
+  .account-note code, .account-guidance code { color: var(--text); background: var(--bg3); padding: 0 4px; border-radius: 3px; }
+  .account-body { padding: 0 18px 18px; }
+  .account-live { margin-top: 12px; padding: 8px 10px; border-left: 3px solid var(--accent); border-radius: 4px; background: var(--bg3); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+  .account-live:empty { display: none; }
+  .account-live[data-kind="error"] { border-left-color: var(--red); color: var(--red); }
+  .account-live[data-kind="success"] { border-left-color: var(--green); }
+  .account-section { padding: 14px 0 2px; }
+  .account-section + .account-section { margin-top: 12px; border-top: 1px solid var(--border); }
+  .account-section h3 { margin-bottom: 8px; color: var(--text2); font-size: 10px; letter-spacing: 0.7px; text-transform: uppercase; }
+  .account-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; font-size: 12px; }
+  .account-facts dt { color: var(--text2); }
+  .account-facts dd { overflow-wrap: anywhere; }
+  .account-problem { margin-top: 8px; color: var(--red); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+  .account-problem:empty { display: none; }
+  .account-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .account-list { list-style: none; margin: 8px 0; display: grid; gap: 6px; }
+  .account-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+  .account-list .account-login { font-weight: 700; overflow-wrap: anywhere; }
+  .account-list .account-host { color: var(--text2); font-size: 11px; }
+  .account-list .account-reason { flex-basis: 100%; color: var(--text2); font-size: 11px; line-height: 1.4; }
+  .account-list .account-btn { margin-left: auto; }
+  .account-badge { padding: 1px 7px; border-radius: 999px; font-size: 9px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; background: var(--neutral-soft); color: var(--text2); }
+  .account-badge.current { background: var(--green-soft); color: var(--green); }
+  .account-muted { color: var(--text2); font-size: 11px; line-height: 1.45; }
+  .account-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+  .account-field label { color: var(--text2); font-size: 11px; }
+  .account-field input { min-width: 0; flex: 1 1 180px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font: inherit; font-size: 12px; }
+  .device-steps { margin: 8px 0; font-size: 12px; line-height: 1.6; }
+  .device-steps a { color: var(--accent); }
+  .device-code-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 6px 0 10px; }
+  .device-code { display: inline-block; padding: 10px 18px; border: 1px dashed var(--accent); border-radius: 8px; background: var(--accent-soft); color: var(--text); font-size: 26px; font-weight: 700; letter-spacing: 0.26em; font-variant-numeric: tabular-nums; user-select: all; animation: device-code-in 0.35s ease-out; }
+  @keyframes device-code-in { from { opacity: 0; transform: translateY(4px); letter-spacing: 0.5em; } }
+  .device-meter { height: 3px; margin: 4px 0 6px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+  .device-meter span { display: block; height: 100%; width: 100%; background: var(--accent); transition: width 1s linear; }
+  .device-status { color: var(--text2); font-size: 11px; }
+  .account-guidance { color: var(--text2); font-size: 11px; line-height: 1.55; }
+  .account-guidance a { color: var(--accent); }
+  .msg.notice { color: var(--text2); font-size: 11px; text-align: center; border-top: 1px dashed var(--border); padding-top: 8px; }
+  .msg.assistant.discarded .content, .msg.assistant.errored .content { color: var(--text2); font-style: italic; }
+  .msg.assistant.errored .content { color: var(--red); }
+  @media (prefers-reduced-motion: reduce) {
+    .account-dot.loading, .device-code { animation: none; }
+    .device-meter span { transition: none; }
+  }
+  @media (max-width: 760px) {
+    .auth-banner { flex-wrap: wrap; padding-left: 12px; padding-right: 12px; }
+    .account-modal { padding: 0; }
+    .account-dialog { min-height: 100%; border: 0; border-radius: 0; }
+    .account-header, .account-body { padding-left: 12px; padding-right: 12px; }
+    .device-code { font-size: 21px; }
+  }
+
   /* ── Gateway Panel (per-host stats + color-coded log) ── */
   .gateway-panel { display: flex; flex-direction: column; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; max-height: 320px; }
   .gateway-panel.collapsed .gp-body { display: none; }
@@ -289,6 +368,10 @@
     <button class="mode-btn active" data-mode="vscode" onclick="setMode('vscode')">VS Code</button>
     <button class="mode-btn" data-mode="cli" onclick="setMode('cli')">CLI</button>
   </div>
+  <button class="account-button" id="account-button" type="button" onclick="openAccountDialog()" aria-haspopup="dialog" aria-controls="account-modal">
+    <span class="account-dot loading" id="account-dot" aria-hidden="true"></span>
+    <span class="account-button-text" id="account-button-text">Account…</span>
+  </button>
   <select id="model-select" aria-label="Model"><option>Loading models...</option></select>
   <button class="catalog-button" id="catalog-button" type="button" onclick="openPriceCatalog()" disabled>All model prices</button>
   <button class="usage-button" id="usage-button" type="button" onclick="openUsageDashboard()">Usage</button>
@@ -310,12 +393,20 @@
 <div class="mode-info-bar" id="mode-info-bar">
   <span class="mib-label">API</span>
   <span class="mib-url" id="mib-url">-</span>
-  <span class="mib-label">Token</span>
-  <span class="mib-value" id="mib-token">-</span>
+  <span class="mib-label">Account</span>
+  <span class="mib-value" id="mib-account">-</span>
+  <span class="mib-label">Source</span>
+  <span class="mib-value" id="mib-source">-</span>
   <span class="mib-label">Header</span>
   <span class="mib-value" id="mib-header">-</span>
   <span class="mib-label">Models</span>
   <span class="mib-value" id="mib-count">-</span>
+</div>
+
+<!-- Account / model availability banner -->
+<div class="auth-banner" id="auth-banner" role="status" aria-live="polite" hidden>
+  <span class="auth-banner-text" id="auth-banner-text"></span>
+  <button class="account-btn" id="auth-banner-action" type="button" onclick="openAccountDialog()">Sign in or choose account</button>
 </div>
 
 <!-- Selected Model Details -->
@@ -530,6 +621,83 @@
   </section>
 </div>
 
+<!-- Demo account dialog (per mode; never changes the gateway or global gh login) -->
+<div class="account-modal" id="account-modal" aria-hidden="true" onclick="handleAccountBackdrop(event)">
+  <section class="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-title" aria-describedby="account-scope">
+    <header class="account-header">
+      <div class="account-heading">
+        <h2 id="account-title" tabindex="-1">Account — VS Code mode</h2>
+        <p class="account-note" id="account-scope">Applies to this demo's selected mode in every open tab. It does not change the gateway's account, <code>.gateway-token.json</code>, or your active gh login.</p>
+      </div>
+      <button class="account-btn" id="account-close" type="button" onclick="closeAccountDialog()" aria-label="Close account dialog">Close</button>
+    </header>
+    <div class="account-body">
+      <div class="account-live" id="account-live" role="status" aria-live="polite"></div>
+
+      <section class="account-section" aria-labelledby="account-current-title">
+        <h3 id="account-current-title">Current account</h3>
+        <dl class="account-facts" id="account-facts"></dl>
+        <div class="account-problem" id="account-problem"></div>
+        <div class="account-actions">
+          <button class="account-btn" id="account-reload" type="button" onclick="reloadAccount()">Retry loading</button>
+          <button class="account-btn" id="account-default" type="button" onclick="useDefaultSource()">Use default source</button>
+          <button class="account-btn danger" id="account-signout" type="button" onclick="signOutAccount()">Sign out of demo</button>
+        </div>
+      </section>
+
+      <section class="account-section" aria-labelledby="account-gh-title">
+        <h3 id="account-gh-title">GitHub CLI accounts</h3>
+        <p class="account-note">Uses <code>gh auth token --user</code> for this demo only. Your active gh account is not switched and the token is not copied.</p>
+        <div class="account-muted" id="account-gh-status">Open to load accounts.</div>
+        <ul class="account-list" id="account-gh-list" aria-label="GitHub CLI accounts"></ul>
+        <button class="account-btn" id="account-gh-refresh" type="button" onclick="loadGhAccounts()">Refresh list</button>
+      </section>
+
+      <section class="account-section" aria-labelledby="account-device-title">
+        <h3 id="account-device-title">Sign in with GitHub.com</h3>
+        <p class="account-note">Device sign-in for github.com personal and Enterprise Managed User accounts (experimental demo integration). Managed users: on GitHub's sign-in page enter your managed username (for example <code>name_shortcode</code>), then continue with your identity provider. Organizations using SAML SSO may also need an active SSO session. Closing this dialog cancels a pending sign-in.</p>
+        <div id="account-device-idle">
+          <div class="account-field">
+            <label for="account-expected-login">Expected username (optional)</label>
+            <input id="account-expected-login" type="text" autocomplete="username" spellcheck="false" maxlength="100">
+            <button class="account-btn primary" id="account-device-start" type="button" onclick="startDeviceSignIn()">Start sign-in</button>
+          </div>
+        </div>
+        <div id="account-device-pending" hidden>
+          <p class="device-steps">1. Open <a id="account-device-link" target="_blank" rel="noopener noreferrer">github.com/login/device</a> 2. Enter this one-time code:</p>
+          <div class="device-code-row">
+            <span class="device-code" id="account-device-code"></span>
+            <button class="account-btn" id="account-device-copy" type="button" onclick="copyDeviceCode()">Copy code</button>
+          </div>
+          <div class="device-meter" aria-hidden="true"><span id="account-device-meter"></span></div>
+          <p class="device-status" id="account-device-status"></p>
+          <div class="account-actions">
+            <button class="account-btn" id="account-device-cancel" type="button" onclick="cancelDeviceSignIn()">Cancel sign-in</button>
+          </div>
+        </div>
+        <div id="account-device-confirm" hidden>
+          <p class="device-steps" id="account-device-candidate"></p>
+          <div class="account-actions">
+            <button class="account-btn primary" id="account-device-confirm-btn" type="button" onclick="confirmDeviceSignIn()">Use this account</button>
+            <button class="account-btn" id="account-device-reject" type="button" onclick="cancelDeviceSignIn()">Cancel</button>
+          </div>
+        </div>
+        <div id="account-device-result" hidden>
+          <p class="device-steps" id="account-device-result-text"></p>
+          <div class="account-actions">
+            <button class="account-btn" id="account-device-retry" type="button" onclick="resetDeviceView(true)">Start over</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="account-section" aria-labelledby="account-enterprise-title">
+        <h3 id="account-enterprise-title">GHE.com and GitHub Enterprise Server</h3>
+        <p class="account-guidance">Not supported by this demo. Data-residency enterprises (<code>SUBDOMAIN.ghe.com</code>) and self-hosted servers sign in on their own host; this demo never sends those accounts' requests or credentials to github.com. See <a href="https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/configure-personal-settings/authenticate-to-ghecom" target="_blank" rel="noopener noreferrer">GitHub's GHE.com Copilot setup guide</a>.</p>
+      </section>
+    </div>
+  </section>
+</div>
+
 <script>
 // ─── State ───────────────────────────────────────────────────────────────────
 let messages = [];
@@ -550,6 +718,26 @@ let usageSortDirection = 'desc';
 let usagePreviousFocus = null;
 let usagePollTimer = null;
 let usageLoadController = null;
+const MODE_NAMES = { vscode: 'VS Code', cli: 'CLI' };
+const DEVICE_ACTIVE = ['starting', 'pending', 'verifying', 'awaiting_confirmation'];
+let csrfToken = null;
+let authStates = { vscode: null, cli: null };
+let currentGeneration = null;
+let modelRequestSeq = 0;
+let modelLoadController = null;
+let conversationKey = null;
+let activeChat = null;
+let accountMode = 'vscode';
+let accountPreviousFocus = null;
+let accountBusy = false;
+let deviceTxn = null;
+let deviceStartAttempt = null;
+let deviceConfirming = false;
+let deviceAnnounced = null;
+let devicePollTimer = null;
+let deviceCountdownTimer = null;
+let deviceExpiresAt = 0;
+let deviceLifetime = 0;
 
 const $ = (id) => document.getElementById(id);
 const chatEl = $('chat-messages');
@@ -559,6 +747,8 @@ const sendBtn = $('send-btn');
 
 // ─── Mode toggle ─────────────────────────────────────────────────────────────
 function setMode(mode) {
+  // Output of a chat started in another mode must never render in this one.
+  if (activeChat && activeChat.mode !== mode) discardChat(activeChat);
   currentMode = mode;
   document.querySelectorAll('.mode-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode);
@@ -567,22 +757,93 @@ function setMode(mode) {
 }
 
 // ─── Models ──────────────────────────────────────────────────────────────────
+// Only the latest request (by sequence, mode and generation) may update the
+// dropdown, pricing, catalog, banner and errors.
 async function loadModels() {
+  const seq = ++modelRequestSeq;
+  const mode = currentMode;
+  modelLoadController?.abort();
+  const controller = new AbortController();
+  modelLoadController = controller;
+  showModelsLoading();
+  let data;
   try {
-    const resp = await fetch(`/api/models?mode=${currentMode}`);
-    const data = await resp.json();
-    models = data.models || data;
-    // Update mode info bar
-    const listedOnly = data.listed_only || [];
-    listedOnlyModels = listedOnly;
-    $('mib-url').textContent = data.api_base || '-';
-    $('mib-token').textContent = `${data.token_type || '?'} (${data.token_prefix || '?'})`;
-    $('mib-header').textContent = data.integration_id || '(none)';
-    $('mib-count').textContent = listedOnly.length
-      ? `${models.length} callable + ${listedOnly.length} listed-only`
-      : `${models.length} callable`;
-    const sel = $('model-select');
+    data = await apiGet(`/api/models?mode=${encodeURIComponent(mode)}`, controller.signal);
+  } catch (e) {
+    if (seq !== modelRequestSeq || mode !== currentMode || e.name === 'AbortError') return;
+    applyModelsFailure(mode, e);
+    return;
+  } finally {
+    if (modelLoadController === controller) modelLoadController = null;
+  }
+  if (seq !== modelRequestSeq || mode !== currentMode) return;
+  applyModelsResponse(mode, data);
+}
+
+function setModelPlaceholder(text) {
+  const sel = $('model-select');
+  sel.innerHTML = '';
+  const opt = document.createElement('option');
+  opt.value = '';
+  opt.textContent = text;
+  sel.appendChild(opt);
+  sel.value = '';
+  sel.disabled = true;
+}
+
+function resetModelDisplay(placeholder) {
+  models = [];
+  listedOnlyModels = [];
+  currentGeneration = null;
+  setModelPlaceholder(placeholder);
+  $('mib-url').textContent = '-';
+  $('mib-account').textContent = '-';
+  $('mib-source').textContent = '-';
+  $('mib-header').textContent = '-';
+  $('mib-count').textContent = '-';
+  $('model-info').textContent = '';
+  $('catalog-button').disabled = true;
+  renderPricing(null);
+  if ($('price-catalog-modal').classList.contains('open')) renderPriceCatalog();
+}
+
+function showModelsLoading() {
+  resetModelDisplay('Loading models...');
+  setAuthBanner(null);
+  updateAccountButton();
+  updateSendState();
+}
+
+function applyModelsFailure(mode, err) {
+  authStates[mode] = null;
+  resetModelDisplay('Models unavailable');
+  setAuthBanner(err.category === 'loopback_only'
+    ? err.message
+    : `Could not load ${MODE_NAMES[mode]} models: ${err.message}`, 'error');
+  updateAccountButton(err);
+  updateSendState();
+}
+
+function applyModelsResponse(mode, data) {
+  const auth = data.auth || null;
+  authStates[mode] = auth;
+  currentGeneration = data.generation || null;
+  models = Array.isArray(data.models) ? data.models : [];
+  listedOnlyModels = Array.isArray(data.listed_only) ? data.listed_only : [];
+  $('mib-url').textContent = data.api_base || '-';
+  $('mib-account').textContent = describeAccount(auth);
+  $('mib-source').textContent = auth?.source_label || '-';
+  $('mib-header').textContent = data.integration_id || '(none)';
+  $('mib-count').textContent = listedOnlyModels.length
+    ? `${models.length} callable + ${listedOnlyModels.length} listed-only`
+    : `${models.length} callable`;
+  const sel = $('model-select');
+  if (models.length === 0) {
+    setModelPlaceholder(auth?.status === 'ready' ? 'No callable models'
+      : (auth?.status === 'signed_out' ? 'Sign in to load models' : 'Models unavailable'));
+  } else {
     sel.innerHTML = '';
+    sel.disabled = false;
     // Group by vendor
     const vendors = {};
     for (const m of models) {
@@ -603,22 +864,18 @@ async function loadModels() {
       sel.appendChild(group);
     }
     // Default to claude-sonnet-4.6
-    if (models.some(m => m.id === 'claude-sonnet-4.6')) {
-      sel.value = 'claude-sonnet-4.6';
-    }
-    sel.onchange = updateModelInfo;
-    $('catalog-button').disabled = models.length + listedOnlyModels.length === 0;
-    updateModelInfo();
-    if ($('price-catalog-modal').classList.contains('open')) renderPriceCatalog();
-  } catch (e) {
-    models = [];
-    listedOnlyModels = [];
-    $('model-select').innerHTML = '<option>Error loading models</option>';
-    $('model-info').textContent = '';
-    $('catalog-button').disabled = true;
-    renderPricing(null);
-    if ($('price-catalog-modal').classList.contains('open')) renderPriceCatalog();
+    sel.value = models.some(m => m.id === 'claude-sonnet-4.6') ? 'claude-sonnet-4.6' : models[0].id;
   }
+  sel.onchange = () => { updateModelInfo(); updateSendState(); };
+  $('catalog-button').disabled = models.length + listedOnlyModels.length === 0;
+  updateModelInfo();
+  if ($('price-catalog-modal').classList.contains('open')) renderPriceCatalog();
+  renderAuthBanner(mode, auth, data.catalog_status);
+  updateAccountButton();
+  switchConversation(mode, currentGeneration);
+  abandonStaleChat();
+  updateSendState();
+  if ($('account-modal').classList.contains('open') && accountMode === mode) renderAccountDialog();
 }
 
 const PRICE_TIER_LABELS = {
@@ -946,7 +1203,7 @@ function toggleCatalogSortDirection() {
 }
 
 function updateModalBodyState() {
-  const hasOpenModal = document.querySelector('.price-catalog-modal.open, .usage-modal.open');
+  const hasOpenModal = document.querySelector('.price-catalog-modal.open, .usage-modal.open, .account-modal.open');
   document.body.classList.toggle('modal-open', Boolean(hasOpenModal));
 }
 
@@ -975,15 +1232,20 @@ function handleCatalogBackdrop(event) {
 }
 
 document.addEventListener('keydown', (event) => {
+  const accountModal = $('account-modal');
   const usageModal = $('usage-modal');
   const catalogModal = $('price-catalog-modal');
-  const modal = usageModal.classList.contains('open')
-    ? usageModal
-    : (catalogModal.classList.contains('open') ? catalogModal : null);
+  const modal = accountModal.classList.contains('open')
+    ? accountModal
+    : (usageModal.classList.contains('open')
+      ? usageModal
+      : (catalogModal.classList.contains('open') ? catalogModal : null));
   if (!modal) return;
   if (event.key === 'Escape') {
     event.preventDefault();
-    modal === usageModal ? closeUsageDashboard() : closePriceCatalog();
+    if (modal === accountModal) closeAccountDialog();
+    else if (modal === usageModal) closeUsageDashboard();
+    else closePriceCatalog();
     return;
   }
   if (event.key !== 'Tab') return;
@@ -1408,6 +1670,9 @@ function connectEvents() {
   for (const type of ['request_sent', 'response_headers', 'response_chunk', 'response_complete', 'response_error', 'chat_start']) {
     eventSource.addEventListener(type, (e) => {
       const data = JSON.parse(e.data);
+      // Drop events from another mode or an older account generation.
+      if (data.mode && data.generation
+          && (data.mode !== currentMode || data.generation !== currentGeneration)) return;
       addFlowEntry(type, data);
     });
   }
@@ -1428,68 +1693,140 @@ function addChatMessage(role, content, meta) {
   return div.querySelector('.content');
 }
 
+function addChatNotice(text) {
+  const div = document.createElement('div');
+  div.className = 'msg notice';
+  div.textContent = text;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+// A conversation belongs to one mode + account generation. Prior-account
+// history is never submitted to a different account.
+function switchConversation(mode, generation) {
+  const key = generation ? `${mode}:${generation}` : null;
+  if (!key || key === conversationKey) return;
+  const hadHistory = messages.length > 0;
+  messages = [];
+  if (conversationKey !== null && hadHistory) {
+    addChatNotice(`New conversation: ${MODE_NAMES[mode]} mode or its account changed. Earlier messages will not be sent.`);
+  }
+  conversationKey = key;
+}
+
+function isChatCurrent(chat) {
+  return chat.mode === currentMode && authStates[chat.mode]?.generation === chat.generation;
+}
+
+// Discarding releases send ownership immediately; the old request's eventual
+// completion only touches its own message element and never global state.
+function discardChat(chat) {
+  chat.discarded = true;
+  chat.controller.abort();
+  if (activeChat === chat) {
+    activeChat = null;
+    sending = false;
+    updateSendState();
+  }
+}
+
+function abandonStaleChat() {
+  if (activeChat && !isChatCurrent(activeChat)) discardChat(activeChat);
+}
+
+function canSend() {
+  const auth = authStates[currentMode];
+  return Boolean(!sending && currentGeneration && auth?.status === 'ready'
+    && auth.generation === currentGeneration && models.length > 0
+    && models.some(m => m.id === $('model-select').value));
+}
+
+function updateSendState() {
+  sendBtn.disabled = !canSend();
+}
+
+function chatErrorText(err) {
+  if (err.category === 'stale_generation') {
+    return 'The account for this mode changed before sending. Models were refreshed; send again.';
+  }
+  if (err.category === 'upstream_error' && err.info.upstream_status) {
+    return `Copilot API HTTP ${err.info.upstream_status}: ${err.message}`;
+  }
+  return err.message;
+}
+
 async function sendMessage() {
   const text = inputEl.value.trim();
-  if (!text || sending) return;
+  if (!text || !canSend()) return;
 
+  const mode = currentMode;
+  const generation = currentGeneration;
+  const model = $('model-select').value;
   sending = true;
-  sendBtn.disabled = true;
+  updateSendState();
   inputEl.value = '';
   inputEl.style.height = 'auto';
 
-  messages.push({ role: 'user', content: text });
+  const outgoing = [...messages, { role: 'user', content: text }];
+  messages = outgoing;
   addChatMessage('user', text);
 
-  const model = $('model-select').value;
   const assistantContent = addChatMessage('assistant', '');
+  const chat = { controller: new AbortController(), mode, generation, discarded: false };
+  activeChat = chat;
   let fullText = '';
+  let errorText = null;
+  let responseModel = model; // track what model actually responded
   const t0 = performance.now();
 
   try {
-    const resp = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, mode: currentMode }),
-    });
-
-    let responseModel = model; // track what model actually responded
-
-    if (resp.headers.get('content-type')?.includes('text/event-stream')) {
+    const resp = await apiPost('/api/chat', { model, messages: outgoing, mode, generation },
+      { signal: chat.controller.signal });
+    if (!resp.ok) {
+      const err = await readApiError(resp);
+      errorText = chatErrorText(err);
+      if (err.category === 'stale_generation' && !chat.discarded && mode === currentMode) loadModels();
+    } else if (resp.headers.get('content-type')?.includes('text/event-stream')) {
       // Streaming
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
 
-      while (true) {
+      while (!chat.discarded) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (chat.discarded) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop();
 
         for (const line of lines) {
           if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-            try {
-              const ev = JSON.parse(line.slice(6));
-              // Capture actual model from message_start (Anthropic)
-              if (ev.type === 'message_start' && ev.message?.model) {
-                responseModel = ev.message.model;
-              }
-              // Anthropic format
-              if (ev.type === 'content_block_delta') {
-                fullText += ev.delta?.text || '';
-                assistantContent.textContent = fullText;
-                chatEl.scrollTop = chatEl.scrollHeight;
-              }
-              // Capture actual model from OpenAI chunk
-              if (ev.model) responseModel = ev.model;
-              // OpenAI format
-              if (ev.choices?.[0]?.delta?.content) {
-                fullText += ev.choices[0].delta.content;
-                assistantContent.textContent = fullText;
-                chatEl.scrollTop = chatEl.scrollHeight;
-              }
-            } catch {}
+            let ev;
+            try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+            if (ev.type === 'error' || ev.error) {
+              const e = ev.error;
+              errorText = (typeof e === 'object' ? e?.message : e) || ev.message || 'The stream reported an error.';
+              continue;
+            }
+            // Capture actual model from message_start (Anthropic)
+            if (ev.type === 'message_start' && ev.message?.model) {
+              responseModel = ev.message.model;
+            }
+            // Anthropic format
+            if (ev.type === 'content_block_delta') {
+              fullText += ev.delta?.text || '';
+              assistantContent.textContent = fullText;
+              chatEl.scrollTop = chatEl.scrollHeight;
+            }
+            // Capture actual model from OpenAI chunk
+            if (ev.model) responseModel = ev.model;
+            // OpenAI format
+            if (ev.choices?.[0]?.delta?.content) {
+              fullText += ev.choices[0].delta.content;
+              assistantContent.textContent = fullText;
+              chatEl.scrollTop = chatEl.scrollHeight;
+            }
           }
         }
       }
@@ -1498,34 +1835,51 @@ async function sendMessage() {
       const data = await resp.json();
       if (data.model) responseModel = data.model;
       if (data.error) {
-        const err = typeof data.error === 'object' ? (data.error.message || JSON.stringify(data.error)) : data.error;
-        fullText = `Error: ${err}`;
+        errorText = typeof data.error === 'object' ? (data.error.message || 'Unknown error') : String(data.error);
       } else if (data.output_text) {
         fullText = data.output_text;
-      } else if (data.output?.[0]?.content?.[0]?.text) {
-        fullText = data.output[0].content[0].text;
+      } else if (Array.isArray(data.output)) {
+        fullText = data.output.flatMap(o => o?.content || []).map(c => c?.text || '').join('');
       } else if (data.content?.[0]?.text) {
         fullText = data.content[0].text;
-      } else {
-        fullText = JSON.stringify(data, null, 2);
       }
-      assistantContent.textContent = fullText;
+      if (!fullText && !errorText) fullText = JSON.stringify(data, null, 2);
+      if (!chat.discarded) assistantContent.textContent = fullText;
     }
-
-    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
-    const actualModel = responseModel !== model ? `${model} → ${responseModel}` : responseModel;
-    const metaEl = assistantContent.parentElement.querySelector('.meta') ||
-      (() => { const m = document.createElement('div'); m.className = 'meta'; assistantContent.parentElement.appendChild(m); return m; })();
-    metaEl.textContent = `${actualModel} | ${elapsed}s`;
-
-    messages.push({ role: 'assistant', content: fullText });
-
   } catch (e) {
-    assistantContent.textContent = `Error: ${e.message}`;
+    if (!chat.discarded) errorText = e.name === 'AbortError' ? 'Request cancelled.' : e.message;
+  } finally {
+    // Only the current owner releases sending; a discarded chat already did.
+    if (activeChat === chat) {
+      activeChat = null;
+      sending = false;
+    }
   }
 
-  sending = false;
-  sendBtn.disabled = false;
+  // History is updated only if it is still this chat's array (identity), so a
+  // late completion can never rewrite a newer conversation.
+  const ownsHistory = messages === outgoing;
+  const msgEl = assistantContent.parentElement;
+  if (chat.discarded) {
+    msgEl.classList.add('discarded');
+    assistantContent.textContent = 'Response discarded: the mode or its account changed before it finished. It was not resent.';
+    if (ownsHistory) messages = outgoing.slice(0, -1);
+    updateSendState();
+    return;
+  } else if (errorText && !fullText) {
+    msgEl.classList.add('errored');
+    assistantContent.textContent = `Error: ${errorText}`;
+    if (ownsHistory) messages = outgoing.slice(0, -1);
+  } else {
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    const actualModel = responseModel !== model ? `${model} → ${responseModel}` : responseModel;
+    const metaEl = msgEl.querySelector('.meta') ||
+      (() => { const m = document.createElement('div'); m.className = 'meta'; msgEl.appendChild(m); return m; })();
+    metaEl.textContent = errorText ? `${actualModel} | ${elapsed}s | stream error: ${errorText}` : `${actualModel} | ${elapsed}s`;
+    if (!fullText) assistantContent.textContent = '(empty response)';
+    if (ownsHistory) messages = [...outgoing, { role: 'assistant', content: fullText }];
+  }
+  updateSendState();
   inputEl.focus();
 }
 
@@ -1817,9 +2171,557 @@ async function startGatewayPoller() {
   setTimeout(startGatewayPoller, GATEWAY_POLL_MS);
 }
 
+// ─── Demo API helpers (same-origin, CSRF) ─────────────────────────────────────
+class ApiError extends Error {
+  constructor(status, info) {
+    super(info?.message || `Request failed (HTTP ${status})`);
+    this.status = status;
+    this.category = info?.category || 'http_error';
+    this.info = info || {};
+  }
+}
+
+async function readApiError(resp) {
+  let data = null;
+  try { data = await resp.json(); } catch {}
+  const info = data && typeof data.error === 'object' && data.error
+    ? data.error
+    : { message: typeof data?.error === 'string' ? data.error : `Request failed (HTTP ${resp.status})` };
+  return new ApiError(resp.status, info);
+}
+
+async function ensureSession(force = false) {
+  if (csrfToken && !force) return csrfToken;
+  const resp = await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' });
+  if (!resp.ok) throw await readApiError(resp);
+  csrfToken = (await resp.json()).csrf;
+  return csrfToken;
+}
+
+async function apiGet(path, signal) {
+  const resp = await fetch(path, { credentials: 'same-origin', cache: 'no-store', signal });
+  if (!resp.ok) throw await readApiError(resp);
+  return resp.json();
+}
+
+// Retries once with a fresh session when the server no longer knows ours
+// (e.g. after a demo restart); rejected requests never reach Copilot.
+async function apiPost(path, body, options = {}) {
+  let resp;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const token = await ensureSession(attempt > 0);
+    resp = await fetch(path, {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: options.signal,
+      headers: { 'Content-Type': 'application/json', 'X-Demo-CSRF': token },
+      body: JSON.stringify(body),
+    });
+    if (resp.status !== 403 || attempt > 0) return resp;
+    const err = await readApiError(resp.clone());
+    if (err.category !== 'csrf_failed') return resp;
+  }
+  return resp;
+}
+
+async function apiJson(path, body) {
+  const resp = await apiPost(path, body);
+  if (!resp.ok) throw await readApiError(resp);
+  return resp.json();
+}
+
+// ─── Account status (header, info bar, banner) ───────────────────────────────
+function describeAccount(auth) {
+  if (!auth) return '-';
+  if (auth.account) {
+    const who = `@${auth.account.login} (${auth.account.host})`;
+    return auth.status === 'ready' ? who : `${who}, ${auth.status.replace('_', ' ')}`;
+  }
+  return auth.status === 'signed_out' ? 'signed out' : (auth.status === 'error' ? 'unavailable' : '-');
+}
+
+function setAuthBanner(text, kind = 'warn', actionLabel = 'Sign in or choose account') {
+  const banner = $('auth-banner');
+  if (!text) {
+    banner.hidden = true;
+    $('auth-banner-text').textContent = '';
+    return;
+  }
+  banner.hidden = false;
+  banner.classList.toggle('error', kind === 'error');
+  $('auth-banner-text').textContent = text;
+  $('auth-banner-action').textContent = actionLabel;
+}
+
+function renderAuthBanner(mode, auth, catalogStatus) {
+  const name = MODE_NAMES[mode];
+  if (!auth) { setAuthBanner(`${name} mode status is unknown.`, 'error'); return; }
+  if (auth.status === 'signed_out') {
+    setAuthBanner(`No account for ${name} mode, so no models are listed. ${auth.error?.message || ''}`.trim());
+  } else if (auth.status === 'error') {
+    setAuthBanner(`${name} models unavailable: ${auth.error?.message || 'unknown error'}`, 'error', 'Fix account');
+  } else if (auth.status === 'ready' && catalogStatus === 'empty') {
+    const listed = listedOnlyModels.length ? ` (${listedOnlyModels.length} listed but not callable)` : '';
+    setAuthBanner(`@${auth.account?.login} has no callable models in ${name} mode${listed}.`, 'warn', 'Choose another account');
+  } else {
+    setAuthBanner(null);
+  }
+}
+
+function updateAccountButton(err) {
+  const auth = authStates[currentMode];
+  const dot = $('account-dot');
+  const label = $('account-button-text');
+  let state = 'loading';
+  let text = 'Account…';
+  if (err) { state = 'error'; text = 'Account unavailable'; }
+  else if (auth?.status === 'ready' && auth.account) { state = 'ready'; text = `@${auth.account.login}`; }
+  else if (auth?.status === 'signed_out') { state = 'signed_out'; text = 'Sign in'; }
+  else if (auth?.status === 'error') { state = 'error'; text = auth.account ? `@${auth.account.login} · issue` : 'Account issue'; }
+  dot.className = `account-dot ${state}`;
+  label.textContent = text;
+  $('account-button').setAttribute('aria-label', `${MODE_NAMES[currentMode]} mode account: ${text}. Open account dialog`);
+}
+
+async function refreshCurrentGeneration() {
+  const mode = currentMode;
+  const known = currentGeneration;
+  if (!known) return;
+  try {
+    const status = await apiGet(`/api/auth/status?mode=${encodeURIComponent(mode)}`);
+    if (mode === currentMode && known === currentGeneration && status.generation !== known) {
+      authStates[mode] = status;
+      abandonStaleChat();
+      loadModels();
+    }
+  } catch {}
+}
+
+// ─── Account dialog ──────────────────────────────────────────────────────────
+function announceAccount(message, kind = 'info') {
+  const live = $('account-live');
+  live.dataset.kind = kind;
+  live.textContent = message || '';
+}
+
+function accountErrorText(err) {
+  return err?.message || 'Request failed.';
+}
+
+function isVisibleEnabled(el) {
+  return Boolean(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true'
+    && el.getClientRects().length > 0;
+}
+
+function ensureAccountFocus(preferred) {
+  const modal = $('account-modal');
+  if (!modal.classList.contains('open')) return;
+  const active = document.activeElement;
+  if (preferred && isVisibleEnabled(preferred)) { preferred.focus(); return; }
+  if (!modal.contains(active) || !isVisibleEnabled(active)) $('account-title').focus();
+}
+
+function setAccountBusy(busy) {
+  accountBusy = busy;
+  $('account-modal').querySelector('.account-dialog').setAttribute('aria-busy', busy ? 'true' : 'false');
+  for (const id of ['account-reload', 'account-default', 'account-signout', 'account-gh-refresh', 'account-device-start', 'account-device-confirm-btn']) {
+    $(id).setAttribute('aria-disabled', busy ? 'true' : 'false');
+  }
+  document.querySelectorAll('#account-gh-list button').forEach(b => b.setAttribute('aria-disabled', busy ? 'true' : 'false'));
+}
+
+function setDeviceConfirming(confirming) {
+  deviceConfirming = confirming;
+  for (const id of ['account-close', 'account-device-cancel', 'account-device-reject']) {
+    $(id).setAttribute('aria-disabled', confirming ? 'true' : 'false');
+  }
+}
+
+function addFact(list, label, value) {
+  const dt = document.createElement('dt');
+  dt.textContent = label;
+  const dd = document.createElement('dd');
+  dd.textContent = value;
+  list.appendChild(dt);
+  list.appendChild(dd);
+}
+
+function renderAccountDialog() {
+  const auth = authStates[accountMode];
+  const name = MODE_NAMES[accountMode];
+  $('account-title').textContent = `Account — ${name} mode`;
+  $('account-scope').textContent = `Applies to this demo's ${name} mode in every open tab. It does not change the gateway's account, .gateway-token.json, or your active gh login.`;
+  const facts = $('account-facts');
+  facts.replaceChildren();
+  addFact(facts, 'Status', auth ? auth.status.replace('_', ' ') : 'unknown');
+  addFact(facts, 'Account', auth?.account ? `@${auth.account.login} (GitHub ID ${auth.account.user_id})` : '-');
+  addFact(facts, 'Host', auth?.account?.host || '-');
+  addFact(facts, 'Credential source', auth?.source_label || '-');
+  addFact(facts, 'Integration', auth?.integration_id || '-');
+  addFact(facts, 'API endpoint', auth?.api_base || '-');
+  if (auth?.expires_at) addFact(facts, 'Expires', new Date(auth.expires_at * 1000).toLocaleString());
+  $('account-problem').textContent = auth?.status !== 'ready' && auth?.error ? auth.error.message : '';
+  $('account-signout').hidden = !auth || auth.status === 'signed_out';
+  $('account-default').hidden = Boolean(auth) && auth.status === 'ready'
+    && ['environment', 'gh_active', 'legacy_vscode'].includes(auth.source);
+  $('account-gh-list').querySelectorAll('button[data-login]').forEach(b => {
+    b.textContent = `Use for ${name}`;
+  });
+  renderDevice();
+}
+
+function openAccountDialog() {
+  if ($('account-modal').classList.contains('open')) return;
+  accountMode = currentMode;
+  accountPreviousFocus = document.activeElement;
+  resetDeviceView(false);
+  announceAccount('');
+  $('account-modal').classList.add('open');
+  $('account-modal').setAttribute('aria-hidden', 'false');
+  updateModalBodyState();
+  renderAccountDialog();
+  $('account-close').focus();
+  refreshAccountStatus();
+  loadGhAccounts();
+}
+
+function closeAccountDialog() {
+  if (deviceConfirming) return;
+  if (deviceTxn && DEVICE_ACTIVE.includes(deviceTxn.status)) cancelDeviceSignIn(true);
+  deviceStartAttempt = null; // an in-flight start is cancelled when it returns
+  stopDeviceTimers();
+  $('account-modal').classList.remove('open');
+  $('account-modal').setAttribute('aria-hidden', 'true');
+  updateModalBodyState();
+  accountPreviousFocus?.focus();
+  accountPreviousFocus = null;
+}
+
+function handleAccountBackdrop(event) {
+  if (event.target === event.currentTarget) closeAccountDialog();
+}
+
+function applyAccountState(state) {
+  authStates[state.mode] = state;
+  if (state.mode === currentMode) loadModels();
+  renderAccountDialog();
+}
+
+async function refreshAccountStatus() {
+  const mode = accountMode;
+  try {
+    const state = await apiGet(`/api/auth/status?mode=${encodeURIComponent(mode)}`);
+    if (mode !== accountMode) return;
+    const changed = state.generation !== authStates[mode]?.generation;
+    authStates[mode] = state;
+    if (changed && mode === currentMode) {
+      abandonStaleChat();
+      loadModels();
+    }
+    renderAccountDialog();
+  } catch (err) {
+    announceAccount(accountErrorText(err), 'error');
+  }
+}
+
+async function runAccountAction(pendingText, action, successText) {
+  if (accountBusy) return;
+  const mode = accountMode;
+  setAccountBusy(true);
+  announceAccount(pendingText);
+  try {
+    const state = await action(authStates[mode]?.generation);
+    applyAccountState(state);
+    announceAccount(successText(state), 'success');
+  } catch (err) {
+    announceAccount(accountErrorText(err), 'error');
+    if (err.category === 'stale_generation') refreshAccountStatus();
+  } finally {
+    setAccountBusy(false);
+    renderAccountDialog();
+    ensureAccountFocus();
+  }
+}
+
+function modeResult(state) {
+  const name = MODE_NAMES[state.mode];
+  if (state.status === 'ready' && state.account) return `${name} mode now uses @${state.account.login} (${state.source_label}).`;
+  return `${name} mode: ${state.error?.message || state.status}`;
+}
+
+function reloadAccount() {
+  runAccountAction('Reloading account and models…',
+    (generation) => apiJson('/api/auth/reload', { mode: accountMode, generation }), modeResult);
+}
+
+function useDefaultSource() {
+  runAccountAction('Checking the default credential source…',
+    (generation) => apiJson('/api/auth/use-default', { mode: accountMode, generation }), modeResult);
+}
+
+function signOutAccount() {
+  runAccountAction('Signing out of the demo…',
+    (generation) => apiJson('/api/auth/sign-out', { mode: accountMode, generation }),
+    (state) => `Signed out of the demo's ${MODE_NAMES[state.mode]} mode. The gateway and gh are unchanged.`);
+}
+
+function selectGhAccount(host, login) {
+  runAccountAction(`Verifying @${login} and its model access…`,
+    (generation) => apiJson('/api/auth/select-gh', { mode: accountMode, host, login, generation }), modeResult);
+}
+
+async function loadGhAccounts() {
+  const status = $('account-gh-status');
+  const list = $('account-gh-list');
+  status.textContent = 'Loading gh accounts…';
+  let data;
+  try {
+    data = await apiGet('/api/auth/accounts');
+  } catch (err) {
+    list.replaceChildren();
+    status.textContent = accountErrorText(err);
+    return;
+  }
+  list.replaceChildren();
+  const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+  status.textContent = data.error ? data.error.message
+    : (accounts.length ? '' : 'gh has no signed-in accounts.');
+  const current = authStates[accountMode];
+  for (const acct of accounts) {
+    const li = document.createElement('li');
+    const login = document.createElement('span');
+    login.className = 'account-login';
+    login.textContent = `@${acct.login}`;
+    const host = document.createElement('span');
+    host.className = 'account-host';
+    host.textContent = acct.host;
+    li.appendChild(login);
+    li.appendChild(host);
+    if (acct.active) {
+      const badge = document.createElement('span');
+      badge.className = 'account-badge';
+      badge.textContent = 'active in gh';
+      li.appendChild(badge);
+    }
+    if (current?.status === 'ready' && current.source === 'gh_account'
+        && current.account?.login?.toLowerCase() === acct.login.toLowerCase() && acct.host === current.account.host) {
+      const badge = document.createElement('span');
+      badge.className = 'account-badge current';
+      badge.textContent = 'in use';
+      li.appendChild(badge);
+    }
+    if (acct.supported) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'account-btn';
+      btn.dataset.login = acct.login;
+      btn.textContent = `Use for ${MODE_NAMES[accountMode]}`;
+      btn.setAttribute('aria-label', `Use @${acct.login} for ${MODE_NAMES[accountMode]} mode`);
+      btn.onclick = () => selectGhAccount(acct.host, acct.login);
+      li.appendChild(btn);
+    }
+    if (acct.reason) {
+      const reason = document.createElement('span');
+      reason.className = 'account-reason';
+      reason.textContent = acct.reason;
+      li.appendChild(reason);
+    }
+    list.appendChild(li);
+  }
+}
+
+// ─── Device sign-in ──────────────────────────────────────────────────────────
+function stopDeviceTimers() {
+  clearTimeout(devicePollTimer);
+  clearInterval(deviceCountdownTimer);
+  devicePollTimer = null;
+  deviceCountdownTimer = null;
+}
+
+function showDevicePanel(name) {
+  for (const panel of ['idle', 'pending', 'confirm', 'result']) {
+    $(`account-device-${panel}`).hidden = panel !== name;
+  }
+}
+
+function resetDeviceView(focusStart) {
+  stopDeviceTimers();
+  deviceStartAttempt = null;
+  deviceTxn = null;
+  deviceAnnounced = null;
+  showDevicePanel('idle');
+  if (focusStart) ensureAccountFocus($('account-device-start'));
+}
+
+function showDeviceResult(text, kind) {
+  stopDeviceTimers();
+  showDevicePanel('result');
+  $('account-device-result-text').textContent = text;
+  announceAccount(text, kind);
+  ensureAccountFocus($('account-device-retry'));
+}
+
+function updateDeviceCountdown() {
+  const remaining = Math.max(0, Math.round((deviceExpiresAt - Date.now()) / 1000));
+  const minutes = Math.floor(remaining / 60);
+  const seconds = String(remaining % 60).padStart(2, '0');
+  const verifying = deviceTxn?.status === 'verifying';
+  $('account-device-status').textContent = verifying
+    ? 'Code approved. Verifying the account and its model access…'
+    : (remaining > 0 ? `Waiting for approval on GitHub. Code expires in ${minutes}:${seconds}.` : 'Code expired.');
+  $('account-device-meter').style.width = deviceLifetime ? `${Math.min(100, (remaining / deviceLifetime) * 100)}%` : '0%';
+}
+
+function renderDevice() {
+  const txn = deviceTxn;
+  if (!txn) { showDevicePanel($('account-device-result').hidden ? 'idle' : 'result'); return; }
+  const name = MODE_NAMES[txn.mode];
+  if (txn.status === 'starting' || txn.status === 'pending' || txn.status === 'verifying') {
+    showDevicePanel('pending');
+    if (txn.user_code) $('account-device-code').textContent = txn.user_code;
+    const link = $('account-device-link');
+    if (typeof txn.verification_uri === 'string' && txn.verification_uri.startsWith('https://github.com/')) {
+      link.href = txn.verification_uri;
+      link.textContent = txn.verification_uri.replace('https://', '');
+    }
+    updateDeviceCountdown();
+    if (deviceAnnounced !== txn.status) {
+      announceAccount(txn.status === 'verifying' ? 'Code approved. Verifying account…'
+        : `Enter code ${txn.user_code || ''} at github.com/login/device.`);
+    }
+  } else if (txn.status === 'awaiting_confirmation') {
+    stopDeviceTimers();
+    showDevicePanel('confirm');
+    const c = txn.candidate || {};
+    $('account-device-candidate').textContent = `Verified as @${c.login} (GitHub ID ${c.user_id}) on ${c.host}. ${c.callable_count} callable of ${c.model_count} models in ${name} mode. Use this account for the demo's ${name} mode?`;
+    if (deviceAnnounced !== txn.status) {
+      announceAccount(`Verified as @${c.login}. Confirm to use it.`, 'success');
+      ensureAccountFocus($('account-device-confirm-btn'));
+    }
+  } else if (txn.status === 'committed') {
+    const c = txn.candidate || {};
+    showDeviceResult(`${name} mode now uses @${c.login} (device sign-in).`, 'success');
+  } else {
+    const prefix = { denied: 'Sign-in denied', expired: 'Sign-in expired', cancelled: 'Sign-in cancelled', failed: 'Sign-in failed' }[txn.status] || 'Sign-in ended';
+    const detail = txn.error?.message ? `: ${txn.error.message}` : '.';
+    showDeviceResult(`${prefix}${detail} Your previous account selection is unchanged.`, txn.status === 'cancelled' ? 'info' : 'error');
+  }
+  deviceAnnounced = txn.status;
+}
+
+function applyDeviceTxn(txn) {
+  const previousExpires = deviceTxn?.transaction_id === txn.transaction_id ? deviceExpiresAt : 0;
+  deviceTxn = txn;
+  if (txn.status === 'pending' && typeof txn.expires_in === 'number') {
+    deviceExpiresAt = Date.now() + txn.expires_in * 1000;
+    if (!previousExpires) deviceLifetime = txn.expires_in;
+  }
+  renderDevice();
+  if (DEVICE_ACTIVE.includes(txn.status) && txn.status !== 'awaiting_confirmation') {
+    clearTimeout(devicePollTimer);
+    devicePollTimer = setTimeout(pollDeviceSignIn, Math.max(1, txn.retry_after || 1) * 1000);
+    if (!deviceCountdownTimer) deviceCountdownTimer = setInterval(updateDeviceCountdown, 1000);
+  }
+}
+
+async function startDeviceSignIn() {
+  if (accountBusy) return;
+  resetDeviceView(false);
+  const expected = $('account-expected-login').value.trim();
+  const attempt = {};
+  deviceStartAttempt = attempt;
+  setAccountBusy(true);
+  announceAccount('Requesting a one-time code from GitHub…');
+  try {
+    const txn = await apiJson('/api/auth/device/start', { mode: accountMode, expected_login: expected || null });
+    if (deviceStartAttempt !== attempt) {
+      // Dialog closed or reset while the start was in flight: release it server-side.
+      apiJson('/api/auth/device/cancel', { transaction_id: txn.transaction_id }).catch(() => {});
+      return;
+    }
+    deviceStartAttempt = null;
+    applyDeviceTxn(txn);
+    ensureAccountFocus($('account-device-copy'));
+  } catch (err) {
+    if (deviceStartAttempt !== attempt) return;
+    deviceStartAttempt = null;
+    deviceTxn = null;
+    showDeviceResult(`Could not start sign-in: ${accountErrorText(err)}`, 'error');
+  } finally {
+    setAccountBusy(false);
+  }
+}
+
+async function pollDeviceSignIn() {
+  const txn = deviceTxn;
+  if (!txn || !DEVICE_ACTIVE.includes(txn.status) || txn.status === 'awaiting_confirmation') return;
+  try {
+    const next = await apiJson('/api/auth/device/poll', { transaction_id: txn.transaction_id });
+    if (deviceTxn?.transaction_id !== txn.transaction_id) return;
+    applyDeviceTxn(next);
+  } catch (err) {
+    if (deviceTxn?.transaction_id !== txn.transaction_id) return;
+    deviceTxn = null;
+    showDeviceResult(`Sign-in stopped: ${accountErrorText(err)}`, 'error');
+  }
+}
+
+async function confirmDeviceSignIn() {
+  const txn = deviceTxn;
+  if (!txn || txn.status !== 'awaiting_confirmation' || accountBusy) return;
+  setDeviceConfirming(true);
+  setAccountBusy(true);
+  announceAccount('Applying the verified account…');
+  try {
+    const result = await apiJson('/api/auth/device/confirm', {
+      transaction_id: txn.transaction_id, generation: authStates[txn.mode]?.generation });
+    deviceTxn = result.transaction;
+    applyAccountState(result.state);
+    if (result.state?.status === 'ready') {
+      renderDevice();
+    } else {
+      // Committed, but the freshly sampled state is not usable (e.g. expired).
+      const who = result.state?.account ? `@${result.state.account.login}` : 'The account';
+      showDeviceResult(`${who} was selected, but it is not usable: ${result.state?.error?.message || result.state?.status}`, 'error');
+    }
+  } catch (err) {
+    deviceTxn = null;
+    showDeviceResult(`Not applied: ${accountErrorText(err)}`, 'error');
+    refreshAccountStatus();
+  } finally {
+    setAccountBusy(false);
+    setDeviceConfirming(false);
+  }
+}
+
+async function cancelDeviceSignIn(silent = false) {
+  if (deviceConfirming) return;
+  const txn = deviceTxn;
+  deviceTxn = null;
+  stopDeviceTimers();
+  if (!silent) showDeviceResult('Sign-in cancelled. Your previous account selection is unchanged.', 'info');
+  if (!txn) return;
+  try { await apiJson('/api/auth/device/cancel', { transaction_id: txn.transaction_id }); } catch {}
+}
+
+async function copyDeviceCode() {
+  const code = $('account-device-code').textContent;
+  try {
+    await navigator.clipboard.writeText(code);
+    announceAccount('Code copied.', 'success');
+  } catch {
+    announceAccount('Copy failed; select the code and copy it manually.', 'error');
+  }
+}
+
+window.addEventListener('focus', refreshCurrentGeneration);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshCurrentGeneration();
+});
+
 // ─── Init ────────────────────────────────────────────────────────────────────
 initializeTheme();
 renderUsageDashboard();
+updateSendState();
+ensureSession().catch(() => {});
 loadModels();
 connectEvents();
 startGatewayPoller();

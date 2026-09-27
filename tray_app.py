@@ -39,10 +39,12 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+import webbrowser
 from pathlib import Path
 
 GATEWAY_DEFAULT_HOST = "127.0.0.1"
 GATEWAY_DEFAULT_PORT = 8787
+DEMO_URL = "http://127.0.0.1:8788/"
 STATS_POLL_INTERVAL_S = 2.0
 HTTP_TIMEOUT_S = 1.5
 
@@ -1132,6 +1134,8 @@ class TrayUI:
         wsl_avail = shutil.which("wsl.exe") is not None
         menu_items = [
             pystray.MenuItem("Stats…", lambda *_: self._marshal(self._show_stats)),
+            pystray.MenuItem("Open Demo UI",
+                             lambda *_: self._marshal(self._open_demo_ui)),
             pystray.MenuItem("View logs…", lambda *_: self._marshal(self._show_logs)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Copy claude command",
@@ -1216,6 +1220,23 @@ class TrayUI:
             pass
 
     # — Popups —
+
+    def _open_demo_ui(self):
+        try:
+            opened = webbrowser.open(DEMO_URL)
+        except (OSError, webbrowser.Error) as exc:
+            self._toast(
+                "Open Demo UI failed",
+                f"Could not open {DEMO_URL}\n\n{exc}",
+                ok=False,
+            )
+            return
+        if not opened:
+            self._toast(
+                "Open Demo UI failed",
+                f"No default browser accepted {DEMO_URL}",
+                ok=False,
+            )
 
     def _show_stats(self):
         snap = self.latest_snap

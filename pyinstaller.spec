@@ -45,6 +45,8 @@ a = Analysis(
         ('demo.html', '.'),
         ('gateway.py', '.'),
         ('demo.py', '.'),
+        # demo.py imports demo_auth at runtime from its own directory.
+        ('demo_auth.py', '.'),
     ],
     hiddenimports=[
         # Lazy imports inside tray_app.py callback functions — PyInstaller's
@@ -86,6 +88,19 @@ a = Analysis(
         'traceback',
         'uuid',
         'datetime',
+        # Additional stdlib imports of demo.py / demo_auth.py (demo accounts:
+        # CSRF sessions, protected store, Windows DPAPI via ctypes).
+        'base64',
+        'collections',
+        'dataclasses',
+        'hmac',
+        'http.client',
+        'http.cookies',
+        'math',
+        'stat',
+        'tempfile',
+        'ctypes',
+        'ctypes.wintypes',
     ],
     hookspath=[],
     hooksconfig={},
