@@ -410,9 +410,10 @@ python tray_app.py
 ```
 
 Menu items: Stats (per-origin breakdown from the `per_origin` field of
-`/stats`), View logs (color-coded by origin from `/logs`), Copy claude /
-codex command, Enable for Windows + [Test], Enable for WSL submenu (one
-entry per distro) + per-distro [Test], Stop & quit.
+`/stats`), Open Demo UI (opens `http://127.0.0.1:8788/` in the default
+browser), View logs (color-coded by origin from `/logs`), Copy claude / codex
+command, Enable for Windows + [Test], Enable for WSL submenu (one entry per
+distro) + per-distro [Test], Stop & quit.
 
 ### After pulling updates on Windows
 
