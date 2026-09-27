@@ -448,6 +448,64 @@ test('round-3 #2: account-change discard (same mode) also releases send ownershi
   assert.equal(t.$('send-btn').disabled, false);
 });
 
+test('cross-tab generation change discards the old chat before models reload', async () => {
+  const t = setup();
+  const { sending, chatReq } = await startPendingChat(t);
+  t.run('globalThis.oldChat = activeChat');
+
+  const refreshing = t.run('refreshCurrentGeneration()');
+  await ticks();
+  const statusReq = t.requests.find(r => r.url === '/api/auth/status?mode=vscode');
+  statusReq.resolve(jsonResponse(200, modelsPayload('vscode', 'g2', ['m2'], 'ready', 'bob').auth));
+  await refreshing;
+  await ticks();
+
+  assert.equal(t.run('oldChat.discarded'), true);
+  assert.equal(t.run('activeChat'), null);
+  assert.equal(t.run('sending'), false);
+  assert.equal(t.run('authStates.vscode.generation'), 'g2');
+  assert.equal(modelRequests(t).length, 2);
+
+  chatReq.resolve(jsonResponse(200, { output_text: 'OLD CROSS-TAB RESPONSE' }));
+  await sending;
+  assert.doesNotMatch(t.$('chat-messages').textContent, /OLD CROSS-TAB RESPONSE/);
+});
+
+test('confirmation serializes cancel and dialog close until it settles', async () => {
+  const t = setup();
+  modelRequests(t)[0].resolve(jsonResponse(200, modelsPayload('vscode', 'g1', ['m1'])));
+  await ticks();
+  t.run('openAccountDialog()');
+  t.run(`deviceTxn = { transaction_id: 'tx', mode: 'vscode', status: 'awaiting_confirmation',
+    candidate: { login: 'devuser', user_id: 5, host: 'github.com', callable_count: 3, model_count: 4 } }`);
+
+  const confirming = t.run('confirmDeviceSignIn()');
+  await ticks();
+  assert.equal(t.run('deviceConfirming'), true);
+  assert.equal(t.$('account-close').getAttribute('aria-disabled'), 'true');
+
+  await t.run('cancelDeviceSignIn()');
+  t.run('closeAccountDialog()');
+  assert.equal(t.$('account-modal').classList.contains('open'), true);
+  assert.equal(t.run('deviceTxn.transaction_id'), 'tx');
+  assert.equal(t.requests.some(r => r.url === '/api/auth/device/cancel'), false);
+
+  const req = t.requests.find(r => r.url === '/api/auth/device/confirm');
+  req.resolve(jsonResponse(200, {
+    transaction: { transaction_id: 'tx', mode: 'vscode', status: 'committed',
+      candidate: { login: 'devuser' } },
+    state: modelsPayload('vscode', 'g2', ['m2'], 'ready', 'devuser').auth,
+  }));
+  await confirming;
+  await ticks();
+
+  assert.equal(t.run('deviceConfirming'), false);
+  assert.equal(t.$('account-close').getAttribute('aria-disabled'), 'false');
+  assert.equal(t.run('authStates.vscode.account.login'), 'devuser');
+  t.run('closeAccountDialog()');
+  assert.equal(t.$('account-modal').classList.contains('open'), false);
+});
+
 test('round-4: a committed-but-expired confirmation is shown as not usable', async () => {
   const t = setup();
   modelRequests(t)[0].resolve(jsonResponse(200, modelsPayload('vscode', 'g1', ['m1'])));

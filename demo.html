@@ -732,6 +732,7 @@ let accountPreviousFocus = null;
 let accountBusy = false;
 let deviceTxn = null;
 let deviceStartAttempt = null;
+let deviceConfirming = false;
 let deviceAnnounced = null;
 let devicePollTimer = null;
 let deviceCountdownTimer = null;
@@ -2286,7 +2287,11 @@ async function refreshCurrentGeneration() {
   if (!known) return;
   try {
     const status = await apiGet(`/api/auth/status?mode=${encodeURIComponent(mode)}`);
-    if (mode === currentMode && known === currentGeneration && status.generation !== known) loadModels();
+    if (mode === currentMode && known === currentGeneration && status.generation !== known) {
+      authStates[mode] = status;
+      abandonStaleChat();
+      loadModels();
+    }
   } catch {}
 }
 
@@ -2321,6 +2326,13 @@ function setAccountBusy(busy) {
     $(id).setAttribute('aria-disabled', busy ? 'true' : 'false');
   }
   document.querySelectorAll('#account-gh-list button').forEach(b => b.setAttribute('aria-disabled', busy ? 'true' : 'false'));
+}
+
+function setDeviceConfirming(confirming) {
+  deviceConfirming = confirming;
+  for (const id of ['account-close', 'account-device-cancel', 'account-device-reject']) {
+    $(id).setAttribute('aria-disabled', confirming ? 'true' : 'false');
+  }
 }
 
 function addFact(list, label, value) {
@@ -2372,6 +2384,7 @@ function openAccountDialog() {
 }
 
 function closeAccountDialog() {
+  if (deviceConfirming) return;
   if (deviceTxn && DEVICE_ACTIVE.includes(deviceTxn.status)) cancelDeviceSignIn(true);
   deviceStartAttempt = null; // an in-flight start is cancelled when it returns
   stopDeviceTimers();
@@ -2399,7 +2412,10 @@ async function refreshAccountStatus() {
     if (mode !== accountMode) return;
     const changed = state.generation !== authStates[mode]?.generation;
     authStates[mode] = state;
-    if (changed && mode === currentMode) loadModels();
+    if (changed && mode === currentMode) {
+      abandonStaleChat();
+      loadModels();
+    }
     renderAccountDialog();
   } catch (err) {
     announceAccount(accountErrorText(err), 'error');
@@ -2651,6 +2667,7 @@ async function pollDeviceSignIn() {
 async function confirmDeviceSignIn() {
   const txn = deviceTxn;
   if (!txn || txn.status !== 'awaiting_confirmation' || accountBusy) return;
+  setDeviceConfirming(true);
   setAccountBusy(true);
   announceAccount('Applying the verified account…');
   try {
@@ -2671,10 +2688,12 @@ async function confirmDeviceSignIn() {
     refreshAccountStatus();
   } finally {
     setAccountBusy(false);
+    setDeviceConfirming(false);
   }
 }
 
 async function cancelDeviceSignIn(silent = false) {
+  if (deviceConfirming) return;
   const txn = deviceTxn;
   deviceTxn = null;
   stopDeviceTimers();
